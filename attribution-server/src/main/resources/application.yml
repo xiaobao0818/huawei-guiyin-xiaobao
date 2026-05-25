@@ -1,0 +1,50 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: attribution-server
+  profiles:
+    active: dev
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.MySQLDialect
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    database: 0
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 10
+        min-idle: 5
+    timeout: 5000ms
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+attribution:
+  callback-url: ${CALLBACK_URL:https://ppscrowd-drcn.op.hicloud.com/action-lib-track/hiad/v2/actionupload}
+  callback-retry-max: 3
+  callback-retry-base-seconds: 5
+  attribution-window-days: 30
+  fingerprint-match-minutes: 30
+  click-cache-ttl-days: 7
+  encryption-key: ${ENCRYPTION_KEY:attribution-platform-secret-key-32}
+
+logging:
+  level:
+    com.attribution: DEBUG
+    org.springframework.web: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
