@@ -141,7 +141,7 @@ async function handleSave() {
     dialogVisible.value = false
     await loadEvents()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '操作失败')
+    ElMessage.error(e?.message || '操作失败')
   } finally { saving.value = false }
 }
 
@@ -151,7 +151,7 @@ async function handleDelete(row: any) {
     ElMessage.success('已删除')
     await loadEvents()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '删除失败')
+    ElMessage.error(e?.message || '删除失败')
   }
 }
 </script>

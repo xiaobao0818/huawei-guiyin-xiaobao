@@ -14,19 +14,19 @@ spring:
     properties:
       hibernate:
         format_sql: true
-        dialect: org.hibernate.dialect.MySQLDialect
 
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:6379}
-    password: ${REDIS_PASSWORD:}
-    database: 0
-    lettuce:
-      pool:
-        max-active: 20
-        max-idle: 10
-        min-idle: 5
-    timeout: 5000ms
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+      timeout: 5000ms
 
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
@@ -40,7 +40,8 @@ attribution:
   attribution-window-days: 30
   fingerprint-match-minutes: 30
   click-cache-ttl-days: 7
-  encryption-key: ${ENCRYPTION_KEY:attribution-platform-secret-key-32}
+  callback-worker-fixed-delay-ms: 10000
+  callback-worker-claim-timeout-minutes: 10
 
 logging:
   level:

@@ -1,15 +1,4 @@
--- ============================================
--- 华为鲸鸿动能自归因平台 - 数据库初始化脚本
--- ============================================
-
-CREATE DATABASE IF NOT EXISTS attribution
-    DEFAULT CHARACTER SET utf8mb4
-    DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE attribution;
-
--- 游戏配置表
-CREATE TABLE IF NOT EXISTS game_config (
+CREATE TABLE game_config (
     id                   BIGINT PRIMARY KEY AUTO_INCREMENT,
     game_id              VARCHAR(64)  NOT NULL UNIQUE COMMENT '游戏唯一标识',
     game_name            VARCHAR(128) NOT NULL COMMENT '游戏名称',
@@ -23,8 +12,7 @@ CREATE TABLE IF NOT EXISTS game_config (
     updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) COMMENT='游戏配置';
 
--- 事件定义表
-CREATE TABLE IF NOT EXISTS event_definition (
+CREATE TABLE event_definition (
     id              BIGINT PRIMARY KEY AUTO_INCREMENT,
     game_id         VARCHAR(64)  NOT NULL COMMENT '所属游戏',
     event_name      VARCHAR(64)  NOT NULL COMMENT '事件名',
@@ -38,8 +26,7 @@ CREATE TABLE IF NOT EXISTS event_definition (
     UNIQUE KEY uk_game_event (game_id, event_name)
 ) COMMENT='事件定义';
 
--- 点击记录表
-CREATE TABLE IF NOT EXISTS click_record (
+CREATE TABLE click_record (
     id              BIGINT PRIMARY KEY AUTO_INCREMENT,
     game_id         VARCHAR(64)  NOT NULL COMMENT '游戏ID',
     oaid            VARCHAR(128) NOT NULL COMMENT '设备OAID',
@@ -59,8 +46,7 @@ CREATE TABLE IF NOT EXISTS click_record (
     INDEX idx_click_time (click_time)
 ) COMMENT='点击记录';
 
--- 归因记录表
-CREATE TABLE IF NOT EXISTS attribution_record (
+CREATE TABLE attribution_record (
     id                BIGINT PRIMARY KEY AUTO_INCREMENT,
     game_id           VARCHAR(64)  NOT NULL COMMENT '游戏ID',
     click_id          BIGINT       COMMENT '关联click_record.id',
@@ -78,35 +64,13 @@ CREATE TABLE IF NOT EXISTS attribution_record (
     callback_status   VARCHAR(32)  DEFAULT 'pending' COMMENT '回传状态 pending/success/failed/unmatched/no_callback',
     callback_response TEXT         COMMENT '华为回传响应',
     retry_count       INT DEFAULT 0 COMMENT '重试次数',
-    dedupe_key        VARCHAR(128) COMMENT '业务幂等键',
     created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_attribution_dedupe_key (dedupe_key),
     INDEX idx_game_oaid (game_id, oaid),
     INDEX idx_game_event (game_id, event_type),
     INDEX idx_conversion_time (conversion_time)
 ) COMMENT='归因记录';
 
--- 持久化回传任务表
-CREATE TABLE IF NOT EXISTS callback_task (
-    id              BIGINT PRIMARY KEY AUTO_INCREMENT,
-    attribution_id  BIGINT       NOT NULL COMMENT '关联 attribution_record.id',
-    game_id         VARCHAR(64)  NOT NULL COMMENT '游戏ID',
-    status          VARCHAR(32)  NOT NULL DEFAULT 'pending' COMMENT 'pending/sending/retry_pending/success/dead',
-    context_json    TEXT         NOT NULL COMMENT '回传上下文JSON',
-    attempt_count   INT          NOT NULL DEFAULT 0 COMMENT '已发送次数',
-    max_attempts    INT          NOT NULL DEFAULT 1 COMMENT '最大发送次数',
-    next_retry_at   DATETIME     NOT NULL COMMENT '下次发送时间',
-    locked_at       DATETIME     NULL COMMENT '任务认领时间',
-    last_error      TEXT         NULL COMMENT '最后失败原因',
-    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_callback_task_due (status, next_retry_at),
-    INDEX idx_callback_task_locked (status, locked_at),
-    INDEX idx_callback_task_attribution (attribution_id)
-) COMMENT='持久化回传任务';
-
--- 回传日志表
-CREATE TABLE IF NOT EXISTS callback_log (
+CREATE TABLE callback_log (
     id              BIGINT PRIMARY KEY AUTO_INCREMENT,
     attribution_id  BIGINT       NOT NULL COMMENT '关联attribution_record.id',
     game_id         VARCHAR(64)  NOT NULL COMMENT '游戏ID',
@@ -119,7 +83,6 @@ CREATE TABLE IF NOT EXISTS callback_log (
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 ) COMMENT='回传日志';
 
--- 插入预置事件
 INSERT INTO event_definition (game_id, event_name, display_name, conversion_type, param_schema, is_preset) VALUES
 ('*', 'activate',          '激活',           'activate',           '[]', 1),
 ('*', 'register',          '注册',           'register',           '[]', 1),

@@ -34,7 +34,7 @@
 | **引擎无关** | 客户端仅需 HTTP POST 上报，不依赖任何 SDK |
 | **事件可配置** | 管理后台自定义事件，灵活映射华为 conversion_type |
 | **签名回传** | HMAC-SHA256 签名，符合鲸鸿动能自归因 API 规范 |
-| **异步重试** | CompletableFuture 异步回传 + 指数退避重试（5s → 25s → 125s） |
+| **持久化回传** | 数据库任务队列 + 指数退避重试（5s → 25s → 125s），服务重启不丢任务 |
 | **多游戏管理** | 管理后台注册游戏，配置独立密钥和归因策略 |
 | **数据安全** | 华为密钥 AES-GCM 加密存储，密钥永不暴露 |
 
@@ -243,13 +243,15 @@ mvn spring-boot:run
 
 # 3. 启动前端
 cd admin-frontend
-npm install
+npm ci
 npm run dev
 ```
 
 - 后端: http://localhost:8080
-- 前端: http://localhost:5173
+- 前端: http://localhost:3000
 - H2 控制台: http://localhost:8080/h2-console
+- 本地管理后台账号: `admin` / `admin123`
+- 本地客户端上报 Header: `X-Attribution-Api-Key: dev-report-api-key`
 
 ### Docker 一键部署
 
@@ -258,8 +260,8 @@ npm run dev
 cp .env.example .env
 # 编辑 .env 填入实际密钥
 
-# 2. 构建并启动
-docker compose up -d
+# 2. 构建并启动（后端和前端镜像都会自动构建）
+docker compose up -d --build
 
 # 3. 访问
 # 管理后台: http://localhost:3000
@@ -277,26 +279,24 @@ docker compose up -d
 ```http
 POST /api/v1/report
 Content-Type: application/json
+X-Attribution-Api-Key: your-report-api-key
 
 {
   "gameId": "your_game_id",
+  "platform": "apk",
   "event": "activate",
-  "deviceInfo": {
-    "oaid": "设备OAID",
-    "platform": "apk",
-    "osVersion": "HarmonyOS 4.0.0",
-    "deviceModel": "HUAWEI P60",
-    "appVersion": "1.0.0"
+  "device": {
+    "oaid": "设备OAID"
   },
-  "appInfo": {
-    "bundleId": "com.example.game",
+  "app": {
+    "version": "1.0.0",
     "channel": "huawei"
   },
   "fingerprint": {
     "ip": "192.168.1.1",
-    "userAgent": "Mozilla/5.0 ..."
+    "user_agent": "Mozilla/5.0 ..."
   },
-  "timestamp": 1716883200
+  "ts": 1716883200000
 }
 ```
 
@@ -305,14 +305,15 @@ Content-Type: application/json
 ```json
 {
   "gameId": "your_game_id",
+  "platform": "apk",
   "event": "purchase",
-  "params": {
+  "eventParams": {
     "revenue": 6.00,
     "currency": "CNY",
     "order_id": "ORDER_2024_001"
   },
-  "deviceInfo": { ... },
-  "timestamp": 1716883200
+  "device": { "oaid": "设备OAID" },
+  "ts": 1716883200000
 }
 ```
 
@@ -337,7 +338,7 @@ Content-Type: application/json
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/v1/click` | 接收鲸鸿动能点击回调 |
-| `POST` | `/api/v1/report` | 客户端上报事件 |
+| `POST` | `/api/v1/report` | 客户端上报事件，需 `X-Attribution-Api-Key` |
 | `GET` | `/api/v1/health` | 健康检查 |
 
 ### 管理后台接口
@@ -347,8 +348,8 @@ Content-Type: application/json
 | `GET/POST/PUT/DELETE` | `/admin/api/games` | 游戏 CRUD |
 | `GET/POST/PUT/DELETE` | `/admin/api/events` | 事件配置 CRUD |
 | `GET` | `/admin/api/dashboard` | 数据看板 |
-| `GET` | `/admin/api/attributions` | 归因记录查询 |
-| `GET` | `/admin/api/stats` | 统计数据 |
+| `GET` | `/admin/api/attribution` | 归因记录查询 |
+| `GET` | `/admin/api/stats/{gameId}` | 统计数据 |
 | `GET` | `/admin/api/callback-logs` | 回传日志 |
 
 ### Click 回调参数
@@ -403,20 +404,10 @@ Content-Type: application/json
 cp .env.example .env
 vim .env  # 填入实际密钥和数据库密码
 
-# 2. 构建后端镜像
-cd attribution-server
-mvn clean package -DskipTests
-cd ..
+# 2. 构建并启动全部服务
+docker compose up -d --build
 
-# 3. 构建前端
-cd admin-frontend
-npm install && npm run build
-cd ..
-
-# 4. 启动全部服务
-docker compose up -d
-
-# 5. 验证
+# 3. 验证
 curl http://localhost:8080/api/v1/health
 ```
 
@@ -443,19 +434,29 @@ attribution:
   attribution-window-days: 30        # OAID 归因窗口
   fingerprint-match-minutes: 30      # 指纹匹配窗口
   click-cache-ttl-days: 7            # Redis 缓存 TTL
+  callback-worker-fixed-delay-ms: 10000 # 回传任务扫描间隔
+  callback-worker-claim-timeout-minutes: 10 # sending 任务超时回收
   encryption-key: <32字符密钥>       # AES 加密密钥
+  api-key: <客户端上报API密钥>
+
+admin:
+  username: admin
+  password: <管理后台密码>
 ```
+
+生产环境表结构由 Flyway 管理，迁移脚本位于 `attribution-server/src/main/resources/db/migration`。`attribution-server/sql/init.sql` 仅保留为人工参考。
 
 ### 数据库
 
-5 张核心表：
+6 张核心表：
 
 | 表名 | 说明 | 关键字段 |
 |------|------|----------|
 | `game_config` | 游戏配置 | game_id, secret_key(AES加密), platforms |
 | `event_definition` | 事件定义 | game_id, event_name, conversion_type |
 | `click_record` | 点击记录 | game_id, oaid, callback, click_time |
-| `attribution_record` | 归因记录 | game_id, oaid, event_type, callback_status |
+| `attribution_record` | 归因记录 | game_id, oaid, event_type, callback_status, dedupe_key |
+| `callback_task` | 持久化回传任务 | attribution_id, status, next_retry_at, attempt_count |
 | `callback_log` | 回传日志 | attribution_id, response_code, result_code |
 
 ---

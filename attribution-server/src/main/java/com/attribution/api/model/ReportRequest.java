@@ -1,11 +1,13 @@
 package com.attribution.api.model;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import java.util.Map;
 
 public class ReportRequest {
 
     @NotBlank(message = "game_id不能为空")
+    @JsonAlias("game_id")
     private String gameId;
 
     @NotBlank(message = "platform不能为空")
@@ -14,11 +16,15 @@ public class ReportRequest {
     @NotBlank(message = "event不能为空")
     private String event;
 
+    @JsonAlias({"device_info", "deviceInfo"})
     private DeviceInfo device;
+    @JsonAlias({"event_params", "params"})
     private Map<String, Object> eventParams;
+    @JsonAlias({"app_info", "appInfo"})
     private AppInfo app;
     private Map<String, Object> user;
     private Map<String, String> fingerprint;
+    @JsonAlias("timestamp")
     private Long ts;
 
     public String getGameId() { return gameId; }

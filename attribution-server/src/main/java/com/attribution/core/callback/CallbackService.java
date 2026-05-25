@@ -10,14 +10,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.*;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 @Service
 public class CallbackService {
@@ -35,24 +36,28 @@ public class CallbackService {
     private final CallbackLogRepository callbackLogRepo;
     private final AttributionRecordRepository attributionRecordRepo;
 
-    public CallbackService(ObjectMapper objectMapper, CallbackLogRepository callbackLogRepo,
+    public CallbackService(RestTemplateBuilder restTemplateBuilder, ObjectMapper objectMapper, CallbackLogRepository callbackLogRepo,
                           AttributionRecordRepository attributionRecordRepo) {
-        this.restTemplate = new RestTemplate();
+        this.restTemplate = restTemplateBuilder
+                .connectTimeout(Duration.ofSeconds(5))
+                .readTimeout(Duration.ofSeconds(15))
+                .build();
         this.objectMapper = objectMapper;
         this.callbackLogRepo = callbackLogRepo;
         this.attributionRecordRepo = attributionRecordRepo;
     }
 
-    @Async
-    public CompletableFuture<Void> sendAttribution(AttributionContext ctx, GameConfig gameConfig) {
+    public CallbackResult sendAttribution(AttributionContext ctx, GameConfig gameConfig) {
+        String jsonBody = null;
+        long startMs = System.currentTimeMillis();
         try {
             Map<String, Object> body = buildRequestBody(ctx);
-            String jsonBody = objectMapper.writeValueAsString(body);
+            jsonBody = objectMapper.writeValueAsString(body);
 
             String secretKey = AesUtil.decrypt(gameConfig.getSecretKey(), encryptionKey);
             String authHeader = SignatureUtil.buildAuthorizationHeader(jsonBody, secretKey);
 
-            long startMs = System.currentTimeMillis();
+            startMs = System.currentTimeMillis();
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("Authorization", authHeader);
@@ -78,24 +83,51 @@ public class CallbackService {
                 log.error("保存回传日志失败", e);
             }
 
-            if (response.getStatusCode().is2xxSuccessful()) {
+            boolean callbackAccepted = response.getStatusCode().is2xxSuccessful()
+                    && Integer.valueOf(0).equals(cbLog.getResultCode());
+            if (callbackAccepted) {
                 log.info("回传成功: game={}, event={}, resultCode={}, duration={}ms",
                         ctx.getGameId(), ctx.getEventType(), cbLog.getResultCode(), duration);
                 ctx.markSuccess(response.getBody());
                 updateRecordStatus(ctx.getAttributionRecordId(), "success", response.getBody());
+                return CallbackResult.success(response.getStatusCode().value(), cbLog.getResultCode(), response.getBody());
             } else {
-                log.warn("回传失败: game={}, event={}, httpCode={}, body={}",
-                        ctx.getGameId(), ctx.getEventType(), response.getStatusCode(), response.getBody());
-                ctx.markFailed();
+                log.warn("回传失败: game={}, event={}, httpCode={}, resultCode={}, body={}",
+                        ctx.getGameId(), ctx.getEventType(), response.getStatusCode(),
+                        cbLog.getResultCode(), response.getBody());
+                ctx.markFailed(response.getBody());
                 updateRecordStatus(ctx.getAttributionRecordId(), "failed", response.getBody());
+                return CallbackResult.failure(response.getStatusCode().value(), cbLog.getResultCode(), response.getBody());
             }
 
+        } catch (RestClientResponseException e) {
+            int duration = (int) (System.currentTimeMillis() - startMs);
+            String responseBody = e.getResponseBodyAsString();
+            CallbackLog cbLog = new CallbackLog();
+            cbLog.setAttributionId(ctx.getAttributionRecordId());
+            cbLog.setGameId(ctx.getGameId());
+            cbLog.setRequestUrl(callbackUrl);
+            cbLog.setRequestBody(jsonBody);
+            cbLog.setResponseCode(e.getStatusCode().value());
+            cbLog.setResponseBody(responseBody);
+            cbLog.setResultCode(parseResultCode(responseBody));
+            cbLog.setDurationMs(duration);
+            try {
+                callbackLogRepo.save(cbLog);
+            } catch (Exception saveError) {
+                log.error("保存回传日志失败", saveError);
+            }
+            log.warn("回传失败: game={}, event={}, httpCode={}, resultCode={}, body={}",
+                    ctx.getGameId(), ctx.getEventType(), e.getStatusCode(), cbLog.getResultCode(), responseBody);
+            ctx.markFailed(responseBody);
+            updateRecordStatus(ctx.getAttributionRecordId(), "failed", responseBody);
+            return CallbackResult.failure(e.getStatusCode().value(), cbLog.getResultCode(), responseBody);
         } catch (Exception e) {
             log.error("回传异常: game={}, event={}, error={}", ctx.getGameId(), ctx.getEventType(), e.getMessage());
-            ctx.markFailed();
+            ctx.markFailed(e.getMessage());
             updateRecordStatus(ctx.getAttributionRecordId(), "failed", e.getMessage());
+            return CallbackResult.failure(null, null, e.getMessage());
         }
-        return CompletableFuture.completedFuture(null);
     }
 
     private void updateRecordStatus(Long attributionId, String status, String response) {
@@ -150,5 +182,32 @@ public class CallbackService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    public static class CallbackResult {
+        private final boolean success;
+        private final Integer httpStatus;
+        private final Integer resultCode;
+        private final String responseBody;
+
+        private CallbackResult(boolean success, Integer httpStatus, Integer resultCode, String responseBody) {
+            this.success = success;
+            this.httpStatus = httpStatus;
+            this.resultCode = resultCode;
+            this.responseBody = responseBody;
+        }
+
+        public static CallbackResult success(Integer httpStatus, Integer resultCode, String responseBody) {
+            return new CallbackResult(true, httpStatus, resultCode, responseBody);
+        }
+
+        public static CallbackResult failure(Integer httpStatus, Integer resultCode, String responseBody) {
+            return new CallbackResult(false, httpStatus, resultCode, responseBody);
+        }
+
+        public boolean isSuccess() { return success; }
+        public Integer getHttpStatus() { return httpStatus; }
+        public Integer getResultCode() { return resultCode; }
+        public String getResponseBody() { return responseBody; }
     }
 }

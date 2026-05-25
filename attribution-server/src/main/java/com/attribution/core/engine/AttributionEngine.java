@@ -6,7 +6,6 @@ import com.attribution.common.repository.ClickRecordRepository;
 import com.attribution.common.repository.GameConfigRepository;
 import com.attribution.common.util.RedisKeyUtil;
 import com.attribution.core.callback.AttributionContext;
-import com.attribution.core.callback.CallbackService;
 import com.attribution.core.event.EventRouter;
 import com.attribution.core.matcher.FingerprintMatcher;
 import com.attribution.core.matcher.OaidMatcher;
@@ -14,9 +13,14 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -31,10 +35,15 @@ public class AttributionEngine {
     private final EventRouter eventRouter;
     private final OaidMatcher oaidMatcher;
     private final FingerprintMatcher fingerprintMatcher;
-    private final CallbackService callbackService;
     private final CallbackRetryService retryService;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper objectMapper;
+
+    @Value("${attribution.fingerprint-match-minutes:30}")
+    private int fingerprintMatchMinutes;
+
+    @Value("${attribution.click-cache-ttl-days:7}")
+    private long clickCacheTtlDays;
 
     public AttributionEngine(GameConfigRepository gameConfigRepo,
                              ClickRecordRepository clickRecordRepo,
@@ -42,7 +51,6 @@ public class AttributionEngine {
                              EventRouter eventRouter,
                              OaidMatcher oaidMatcher,
                              FingerprintMatcher fingerprintMatcher,
-                             CallbackService callbackService,
                              CallbackRetryService retryService,
                              RedisTemplate<String, Object> redisTemplate,
                              ObjectMapper objectMapper) {
@@ -52,7 +60,6 @@ public class AttributionEngine {
         this.eventRouter = eventRouter;
         this.oaidMatcher = oaidMatcher;
         this.fingerprintMatcher = fingerprintMatcher;
-        this.callbackService = callbackService;
         this.retryService = retryService;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
@@ -63,6 +70,12 @@ public class AttributionEngine {
         GameConfig gameConfig = gameConfigRepo.findByGameIdAndStatusTrue(request.getGameId()).orElse(null);
         if (gameConfig == null) {
             return ProcessResult.fail("游戏未注册或已停用: " + request.getGameId());
+        }
+
+        String dedupeKey = buildDedupeKey(request);
+        if (dedupeKey != null && attributionRecordRepo.existsByDedupeKey(dedupeKey)) {
+            log.info("事件已处理过，跳过: game={}, event={}", request.getGameId(), request.getEvent());
+            return ProcessResult.ok(null, "already_processed", null);
         }
 
         // 2. 查询事件配置
@@ -106,7 +119,7 @@ public class AttributionEngine {
             if (matchResult == null && Boolean.TRUE.equals(gameConfig.getFingerprintFallback())
                     && request.getFingerprint() != null && !request.getFingerprint().isEmpty()) {
                 Long clickId = fingerprintMatcher.matchByFingerprint(
-                        request.getGameId(), request.getFingerprint(), 30);
+                        request.getGameId(), request.getFingerprint(), normalizedFingerprintMatchMinutes());
                 if (clickId != null) {
                     var clickOpt = clickRecordRepo.findById(clickId);
                     if (clickOpt.isPresent()) {
@@ -127,6 +140,7 @@ public class AttributionEngine {
         // 5. 构造归因记录
         AttributionRecord record = new AttributionRecord();
         record.setGameId(request.getGameId());
+        record.setDedupeKey(dedupeKey);
         String oaid = getOaid(request);
         // 指纹匹配无 OAID 时，用设备指纹哈希作为标识
         if ((oaid == null || oaid.isEmpty()) && request.getFingerprint() != null) {
@@ -176,7 +190,12 @@ public class AttributionEngine {
             if (cached != null) {
                 if (cached instanceof ClickCache cc) {
                     cc.setConverted(true);
-                    redisTemplate.opsForValue().set(redisKey, cc);
+                    Long ttlSeconds = redisTemplate.getExpire(redisKey, TimeUnit.SECONDS);
+                    if (ttlSeconds != null && ttlSeconds > 0) {
+                        redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
+                    } else {
+                        redisTemplate.opsForValue().set(redisKey, cc, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
+                    }
                 }
             }
 
@@ -184,13 +203,23 @@ public class AttributionEngine {
         } else {
             record.setAttributionType(
                     attributionType != null ? attributionType :
-                    (needCallback ? "unmatched" : "no_callback_needed"));
-            if (!needCallback) {
-                record.setCallbackStatus("no_callback_needed");
+                    (needCallback ? "unmatched" : "no_callback"));
+            if (needCallback) {
+                record.setCallbackStatus("unmatched");
+            } else {
+                record.setCallbackStatus("no_callback");
             }
         }
 
-        attributionRecordRepo.save(record);
+        try {
+            attributionRecordRepo.save(record);
+        } catch (DataIntegrityViolationException e) {
+            if (dedupeKey != null) {
+                log.info("事件幂等键已存在，跳过: game={}, event={}", request.getGameId(), request.getEvent());
+                return ProcessResult.ok(null, "already_processed", conversionType);
+            }
+            throw e;
+        }
 
         // 7. 异步回传
         if (needCallback && matchResult != null) {
@@ -208,8 +237,7 @@ public class AttributionEngine {
             ctx.setCampaignId(matchResult.getClickCache().getCampaignId());
             ctx.setTrackingEnabled(matchResult.getClickCache().getTrackingEnabled());
 
-            callbackService.sendAttribution(ctx, gameConfig);
-            retryService.scheduleRetry(ctx, gameConfig);
+            retryService.enqueue(ctx, gameConfig);
         }
 
         log.info("归因处理完成: game={}, event={}, matched={}",
@@ -220,6 +248,50 @@ public class AttributionEngine {
 
     private String getOaid(ReportRequest request) {
         return request.getDevice() != null ? request.getDevice().getOaid() : "";
+    }
+
+    private String buildDedupeKey(ReportRequest request) {
+        String oaid = getOaid(request);
+        String source = null;
+        if ("activate".equals(request.getEvent()) && oaid != null && !oaid.isEmpty()) {
+            source = request.getGameId() + ":activate:" + oaid;
+        } else if (request.getEventParams() != null) {
+            Object explicitEventId = request.getEventParams().get("event_id");
+            if (explicitEventId == null) {
+                explicitEventId = request.getEventParams().get("request_id");
+            }
+            if (explicitEventId != null && !explicitEventId.toString().isBlank()) {
+                source = request.getGameId() + ":" + request.getEvent() + ":event:" + explicitEventId;
+            } else {
+                Object orderId = request.getEventParams().get("order_id");
+                if ("purchase".equals(request.getEvent()) && orderId != null && !orderId.toString().isBlank()) {
+                    source = request.getGameId() + ":purchase:order:" + orderId;
+                }
+            }
+        }
+        return source != null ? sha256Hex(source) : null;
+    }
+
+    private String sha256Hex(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256不可用", e);
+        }
+    }
+
+    private int normalizedFingerprintMatchMinutes() {
+        return Math.max(1, fingerprintMatchMinutes);
+    }
+
+    private long normalizedClickCacheTtlDays() {
+        return Math.max(1, clickCacheTtlDays);
     }
 
     public static class ProcessResult {

@@ -24,6 +24,8 @@
             <el-option label="成功" value="success" />
             <el-option label="失败" value="failed" />
             <el-option label="待回传" value="pending" />
+            <el-option label="未匹配" value="unmatched" />
+            <el-option label="无需回传" value="no_callback" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -61,7 +63,7 @@
       </el-table-column>
       <el-table-column label="回传状态" width="100">
         <template #default="{ row }">
-          <el-tag size="small" :type="row.callbackStatus === 'success' ? 'success' : row.callbackStatus === 'failed' ? 'danger' : 'info'">
+          <el-tag size="small" :type="row.callbackStatus === 'success' ? 'success' : row.callbackStatus === 'failed' ? 'danger' : row.callbackStatus === 'unmatched' ? 'warning' : 'info'">
             {{ row.callbackStatus }}
           </el-tag>
         </template>
@@ -99,14 +101,14 @@ const query = reactive({
   oaid: '',
   eventType: '',
   callbackStatus: '',
-  page: 0,
+  page: 1,
   size: 20
 })
 
 async function search() {
   loading.value = true
   try {
-    const res: any = await queryAttributions(query)
+    const res: any = await queryAttributions({ ...query, page: query.page - 1 })
     if (res.data) {
       records.value = res.data.content || []
       total.value = res.data.totalElements || 0
@@ -119,7 +121,7 @@ function reset() {
   query.oaid = ''
   query.eventType = ''
   query.callbackStatus = ''
-  query.page = 0
+  query.page = 1
   search()
 }
 

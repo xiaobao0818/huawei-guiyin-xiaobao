@@ -7,11 +7,10 @@ import com.attribution.common.repository.GameConfigRepository;
 import com.attribution.common.util.RedisKeyUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 @RestController
@@ -24,6 +23,9 @@ public class ClickController {
     private final GameConfigRepository gameConfigRepo;
     private final RedisTemplate<String, Object> redisTemplate;
 
+    @Value("${attribution.click-cache-ttl-days:7}")
+    private long clickCacheTtlDays;
+
     public ClickController(ClickRecordRepository clickRecordRepo,
                            GameConfigRepository gameConfigRepo,
                            RedisTemplate<String, Object> redisTemplate) {
@@ -34,21 +36,34 @@ public class ClickController {
 
     @GetMapping("/click")
     public String collectClick(
-            @RequestParam("game_id") String gameId,
+            @RequestParam(value = "game_id", required = false) String gameId,
+            @RequestParam(value = "gameId", required = false) String gameIdCamel,
             @RequestParam("callback") String callback,
             @RequestParam(value = "oaid", required = false) String oaid,
             @RequestParam(value = "campaign_id", required = false) String campaignId,
+            @RequestParam(value = "campaignId", required = false) String campaignIdCamel,
             @RequestParam(value = "adgroup_id", required = false) String adgroupId,
+            @RequestParam(value = "adGroupId", required = false) String adgroupIdCamel,
             @RequestParam(value = "content_id", required = false) String contentId,
+            @RequestParam(value = "contentId", required = false) String contentIdCamel,
             @RequestParam(value = "ts", required = false) Long ts,
             @RequestParam(value = "ip", required = false) String ip,
             @RequestParam(value = "ua", required = false) String ua,
             @RequestParam(value = "user_agent", required = false) String userAgent,
             @RequestParam(value = "platform", required = false) String platform,
             @RequestParam(value = "action_type", required = false) String actionType,
+            @RequestParam(value = "actionType", required = false) String actionTypeCamel,
             @RequestParam(value = "tracking_enabled", required = false) String trackingEnabled,
+            @RequestParam(value = "trackingEnabled", required = false) String trackingEnabledCamel,
             @RequestParam(value = "trace_time", required = false) Long traceTime,
             @RequestParam(value = "corp_id", required = false) String corpId) {
+
+        gameId = gameId != null ? gameId : gameIdCamel;
+        campaignId = campaignId != null ? campaignId : campaignIdCamel;
+        adgroupId = adgroupId != null ? adgroupId : adgroupIdCamel;
+        contentId = contentId != null ? contentId : contentIdCamel;
+        actionType = actionType != null ? actionType : actionTypeCamel;
+        trackingEnabled = trackingEnabled != null ? trackingEnabled : trackingEnabledCamel;
 
         if (gameId == null || callback == null) {
             log.warn("点击回调缺少必填参数: game_id={}, callback={}", gameId, callback != null);
@@ -60,12 +75,7 @@ public class ClickController {
             return "error";
         }
 
-        String decodedCallback;
-        try {
-            decodedCallback = URLDecoder.decode(callback, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            decodedCallback = callback;
-        }
+        String decodedCallback = callback;
 
         String safeOaid = oaid != null ? oaid.substring(0, Math.min(oaid.length(), 128)) : "";
         String finalUa = ua != null ? ua : userAgent;
@@ -78,7 +88,7 @@ public class ClickController {
                     decodedCallback, campaignId, adgroupId, contentId,
                     clickTime, platform, actionType, trackingEnabled
             );
-            redisTemplate.opsForValue().set(redisKey, cache, 7, TimeUnit.DAYS);
+            redisTemplate.opsForValue().set(redisKey, cache, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
         }
 
         ClickRecord record = new ClickRecord();
@@ -103,5 +113,9 @@ public class ClickController {
 
         log.info("点击回调: game={}, oaid={}, campaign={}", gameId, safeOaid, campaignId);
         return "success";
+    }
+
+    private long normalizedClickCacheTtlDays() {
+        return Math.max(1, clickCacheTtlDays);
     }
 }

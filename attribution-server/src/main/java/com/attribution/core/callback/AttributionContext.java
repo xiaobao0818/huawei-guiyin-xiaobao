@@ -52,5 +52,10 @@ public class AttributionContext {
         this.success = false;
     }
 
+    public void markFailed(String responseBody) {
+        this.success = false;
+        this.callbackResponse = responseBody;
+    }
+
     public String getCallbackResponse() { return callbackResponse; }
 }

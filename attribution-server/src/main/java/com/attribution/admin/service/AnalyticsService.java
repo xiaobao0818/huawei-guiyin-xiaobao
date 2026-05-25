@@ -22,6 +22,8 @@ import java.util.Map;
 @Service
 public class AnalyticsService {
 
+    private static final List<String> CALLBACK_ATTEMPT_STATUSES = List.of("pending", "success", "failed");
+
     private final AttributionRecordRepository attributionRepo;
     private final ClickRecordRepository clickRepo;
     private final GameConfigRepository gameConfigRepo;
@@ -46,8 +48,8 @@ public class AnalyticsService {
         dto.setTodayRevenue(revenue != null ? revenue : 0.0);
         dto.setTotalGames(gameConfigRepo.count());
 
-        long totalCallbacks = attributionRepo.countByCreatedAtBetween(todayStart, todayEnd);
-        long successCallbacks = attributionRepo.countByCallbackStatusAndDate("success", todayStart, todayEnd);
+        long totalCallbacks = attributionRepo.countCallbackAttemptsByDate(CALLBACK_ATTEMPT_STATUSES, todayStart, todayEnd);
+        long successCallbacks = attributionRepo.countCallbackAttemptsByDate(List.of("success"), todayStart, todayEnd);
         dto.setCallbackSuccessRate(totalCallbacks > 0 ? (double) successCallbacks / totalCallbacks : 0.0);
         return dto;
     }
@@ -55,6 +57,8 @@ public class AnalyticsService {
     public Page<AttributionRecord> queryAttributions(String gameId, String oaid,
                                                       String eventType, String callbackStatus,
                                                       int page, int size) {
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.min(Math.max(size, 1), 100);
         Specification<AttributionRecord> spec = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             if (gameId != null && !gameId.isEmpty()) {
@@ -73,11 +77,12 @@ public class AnalyticsService {
         };
 
         return attributionRepo.findAll(spec,
-                PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt")));
+                PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt")));
     }
 
     public List<AttributionRecord> latestByGame(String gameId, int limit) {
-        return attributionRepo.findTop50ByGameIdOrderByCreatedAtDesc(gameId);
+        int safeLimit = Math.min(Math.max(limit, 1), 100);
+        return attributionRepo.findLatestByGameId(gameId, PageRequest.of(0, safeLimit));
     }
 
     public Map<String, Object> getStats(String gameId, LocalDate startDate, LocalDate endDate) {

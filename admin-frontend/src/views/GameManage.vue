@@ -119,7 +119,7 @@ async function handleSave() {
     dialogVisible.value = false
     await loadGames()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || '操作失败')
+    ElMessage.error(e?.message || '操作失败')
   } finally { saving.value = false }
 }
 

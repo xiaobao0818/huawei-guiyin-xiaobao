@@ -4,7 +4,13 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "attribution_record")
+@Table(name = "attribution_record", indexes = {
+        @Index(name = "idx_game_oaid", columnList = "game_id,oaid"),
+        @Index(name = "idx_game_event", columnList = "game_id,event_type"),
+        @Index(name = "idx_conversion_time", columnList = "conversion_time")
+}, uniqueConstraints = {
+        @UniqueConstraint(name = "uk_attribution_dedupe_key", columnNames = "dedupe_key")
+})
 public class AttributionRecord {
 
     @Id
@@ -50,7 +56,7 @@ public class AttributionRecord {
     @Column(name = "attribution_type", length = 32)
     private String attributionType = "oaid";
 
-    @Column(name = "callback_status", length = 16)
+    @Column(name = "callback_status", length = 32)
     private String callbackStatus = "pending";
 
     @Column(name = "callback_response", columnDefinition = "TEXT")
@@ -58,6 +64,9 @@ public class AttributionRecord {
 
     @Column(name = "retry_count")
     private Integer retryCount = 0;
+
+    @Column(name = "dedupe_key", length = 128)
+    private String dedupeKey;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -99,6 +108,8 @@ public class AttributionRecord {
     public void setCallbackResponse(String callbackResponse) { this.callbackResponse = callbackResponse; }
     public Integer getRetryCount() { return retryCount; }
     public void setRetryCount(Integer retryCount) { this.retryCount = retryCount; }
+    public String getDedupeKey() { return dedupeKey; }
+    public void setDedupeKey(String dedupeKey) { this.dedupeKey = dedupeKey; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

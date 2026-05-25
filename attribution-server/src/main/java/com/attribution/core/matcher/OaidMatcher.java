@@ -51,11 +51,16 @@ public class OaidMatcher {
             }
         }
 
+        long windowMs = (long) attributionWindowDays * 24 * 60 * 60 * 1000;
         return clickRepo.findFirstByGameIdAndOaidAndMatchedFalseOrderByClickTimeDesc(gameId, oaid)
                 .map(click -> {
+                    long elapsedMs = System.currentTimeMillis() - click.getClickTime();
+                    if (elapsedMs > windowMs) {
+                        log.debug("MySQL 匹配过期: game={}, oaid={}, clickTime={}", gameId, oaid, click.getClickTime());
+                        return null;
+                    }
                     ClickCache cc = toClickCache(click);
-                    long ttlSeconds = (click.getClickTime() + (long) attributionWindowDays * 24 * 60 * 60 * 1000
-                            - System.currentTimeMillis()) / 1000;
+                    long ttlSeconds = (click.getClickTime() + windowMs - System.currentTimeMillis()) / 1000;
                     if (ttlSeconds > 0) {
                         redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
                     }

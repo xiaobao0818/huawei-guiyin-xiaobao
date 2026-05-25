@@ -67,7 +67,7 @@ public class GameService {
         config.setCallbackRetryMax(dto.getCallbackRetryMax());
         config.setFingerprintFallback(dto.getFingerprintFallback());
         config.setStatus(dto.getStatus());
-        return gameConfigRepo.save(config);
+        return maskSecret(gameConfigRepo.save(config));
     }
 
     public GameConfig update(Long id, GameConfigDTO dto) {
@@ -82,7 +82,7 @@ public class GameService {
         config.setCallbackRetryMax(dto.getCallbackRetryMax());
         config.setFingerprintFallback(dto.getFingerprintFallback());
         config.setStatus(dto.getStatus());
-        return gameConfigRepo.save(config);
+        return maskSecret(gameConfigRepo.save(config));
     }
 
     public void delete(Long id) {

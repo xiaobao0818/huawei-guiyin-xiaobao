@@ -1,14 +1,49 @@
 import axios from 'axios'
 
+const AUTH_STORAGE_KEY = 'attributionAdminAuth'
+
 const api = axios.create({
   baseURL: '/admin/api',
   timeout: 15000,
   headers: { 'Content-Type': 'application/json' }
 })
 
+function toBase64(input: string) {
+  const bytes = new TextEncoder().encode(input)
+  let binary = ''
+  bytes.forEach(byte => { binary += String.fromCharCode(byte) })
+  return btoa(binary)
+}
+
+export function setAuthCredentials(username: string, password: string) {
+  sessionStorage.setItem(AUTH_STORAGE_KEY, toBase64(`${username}:${password}`))
+}
+
+export function clearAuthCredentials() {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY)
+}
+
+export function hasAuthCredentials() {
+  return !!sessionStorage.getItem(AUTH_STORAGE_KEY)
+}
+
+api.interceptors.request.use(config => {
+  const token = sessionStorage.getItem(AUTH_STORAGE_KEY)
+  if (token) {
+    config.headers.Authorization = `Basic ${token}`
+  }
+  return config
+})
+
 api.interceptors.response.use(
-  res => res.data,
-  err => Promise.reject(err)
+  res => {
+    const body = res.data
+    if (body && typeof body === 'object' && 'code' in body && body.code !== 0) {
+      return Promise.reject(new Error(body.message || '请求失败'))
+    }
+    return body
+  },
+  err => Promise.reject(new Error(err?.response?.data?.message || err?.message || '请求失败'))
 )
 
 export function getDashboard() { return api.get('/dashboard') }
