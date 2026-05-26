@@ -2,6 +2,7 @@ package com.attribution.api.model;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import java.util.Map;
 
 public class ReportRequest {
@@ -11,6 +12,7 @@ public class ReportRequest {
     private String gameId;
 
     @NotBlank(message = "platform不能为空")
+    @Pattern(regexp = "^(apk|hap|rpk)$", message = "platform必须为apk/hap/rpk之一")
     private String platform;
 
     @NotBlank(message = "event不能为空")

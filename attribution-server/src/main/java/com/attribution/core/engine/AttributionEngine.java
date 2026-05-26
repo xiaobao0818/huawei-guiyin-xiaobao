@@ -1,5 +1,6 @@
 package com.attribution.core.engine;
 
+import com.attribution.common.constant.EventConstants;
 import com.attribution.common.entity.*;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.ClickRecordRepository;
@@ -269,6 +270,17 @@ public class AttributionEngine {
                 }
             }
         }
+
+        // Fallback: for events without natural idempotency keys, use a time-window
+        // based key (game + event + oaid + 5-minute bucket) to prevent accidental
+        // duplicate processing within a short window.
+        if (source == null && oaid != null && !oaid.isEmpty()) {
+            // Bucket into 5-minute windows
+            long ts = request.getTs() != null ? request.getTs() : System.currentTimeMillis();
+            long bucket = ts / (5 * 60 * 1000);
+            source = request.getGameId() + ":" + request.getEvent() + ":" + oaid + ":" + bucket;
+        }
+
         return source != null ? sha256Hex(source) : null;
     }
 

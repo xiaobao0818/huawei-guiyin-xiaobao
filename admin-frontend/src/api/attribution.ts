@@ -57,7 +57,15 @@ export function getEvent(id: number) { return api.get(`/events/${id}`) }
 export function createEvent(data: any) { return api.post('/events', data) }
 export function updateEvent(id: number, data: any) { return api.put(`/events/${id}`, data) }
 export function deleteEvent(id: number) { return api.delete(`/events/${id}`) }
-export function queryAttributions(params: any) { return api.get('/attribution', { params }) }
+export function queryAttributions(params: any) {
+  // Backend uses 0-based page indexing, frontend passes 1-based.
+  // Normalize here so views don't need to worry about the offset.
+  const normalizedParams = { ...params };
+  if (typeof normalizedParams.page === 'number') {
+    normalizedParams.page = Math.max(0, normalizedParams.page - 1);
+  }
+  return api.get('/attribution', { params: normalizedParams })
+}
 export function latestAttributions(gameId: string, limit = 50) { return api.get(`/attribution/latest/${gameId}`, { params: { limit } }) }
 export function getStats(gameId: string, startDate: string, endDate: string) {
   return api.get(`/stats/${gameId}`, { params: { startDate, endDate } })

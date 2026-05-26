@@ -12,11 +12,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Component
 public class CallbackRetryService {
@@ -30,11 +33,16 @@ public class CallbackRetryService {
     private static final String STATUS_DEAD = "dead";
     private static final List<String> DUE_STATUSES = List.of(STATUS_PENDING, STATUS_RETRY_PENDING);
 
+    private static final String WORKER_LOCK_KEY = "attribution:lock:callback-worker";
+    private static final String RECOVERY_LOCK_KEY = "attribution:lock:stale-recovery";
+    private static final long LOCK_TTL_SECONDS = 60;
+
     private final CallbackTaskRepository callbackTaskRepo;
     private final AttributionRecordRepository attributionRecordRepo;
     private final GameConfigRepository gameConfigRepo;
     private final CallbackService callbackService;
     private final ObjectMapper objectMapper;
+    private final StringRedisTemplate stringRedisTemplate;
 
     @Value("${attribution.callback-retry-base-seconds:5}")
     private long retryBaseSeconds;
@@ -46,12 +54,14 @@ public class CallbackRetryService {
                                 AttributionRecordRepository attributionRecordRepo,
                                 GameConfigRepository gameConfigRepo,
                                 CallbackService callbackService,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                StringRedisTemplate stringRedisTemplate) {
         this.callbackTaskRepo = callbackTaskRepo;
         this.attributionRecordRepo = attributionRecordRepo;
         this.gameConfigRepo = gameConfigRepo;
         this.callbackService = callbackService;
         this.objectMapper = objectMapper;
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     public void enqueue(AttributionContext ctx, GameConfig gameConfig) {
@@ -74,15 +84,28 @@ public class CallbackRetryService {
 
     @Scheduled(fixedDelayString = "${attribution.callback-worker-fixed-delay-ms:10000}")
     public void processDueTasks() {
-        recoverStaleSendingTasks();
+        String lockValue = UUID.randomUUID().toString();
 
-        List<CallbackTask> dueTasks = callbackTaskRepo
-                .findTop50ByStatusInAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(
-                        DUE_STATUSES, LocalDateTime.now());
-        for (CallbackTask task : dueTasks) {
-            if (callbackTaskRepo.claimTask(task.getId(), DUE_STATUSES, LocalDateTime.now()) == 1) {
-                processClaimedTask(task.getId());
+        // Acquire distributed lock for worker
+        Boolean locked = stringRedisTemplate.opsForValue()
+                .setIfAbsent(WORKER_LOCK_KEY, lockValue, Duration.ofSeconds(LOCK_TTL_SECONDS));
+        if (locked == null || !locked) {
+            return; // Another pod is processing
+        }
+
+        try {
+            recoverStaleSendingTasks();
+
+            List<CallbackTask> dueTasks = callbackTaskRepo
+                    .findTop50ByStatusInAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(
+                            DUE_STATUSES, LocalDateTime.now());
+            for (CallbackTask task : dueTasks) {
+                if (callbackTaskRepo.claimTask(task.getId(), DUE_STATUSES, LocalDateTime.now()) == 1) {
+                    processClaimedTask(task.getId());
+                }
             }
+        } finally {
+            releaseLock(WORKER_LOCK_KEY, lockValue);
         }
     }
 
@@ -140,12 +163,37 @@ public class CallbackRetryService {
     }
 
     private void recoverStaleSendingTasks() {
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime cutoff = now.minusMinutes(Math.max(1, claimTimeoutMinutes));
-        int recovered = callbackTaskRepo.resetStaleSendingTasks(
-                cutoff, now, "发送超时，已重新入队");
-        if (recovered > 0) {
-            log.warn("回收超时回传任务: count={}, cutoff={}", recovered, cutoff);
+        String lockValue = UUID.randomUUID().toString();
+
+        // Separate lock for recovery to avoid blocking worker across pods
+        Boolean locked = stringRedisTemplate.opsForValue()
+                .setIfAbsent(RECOVERY_LOCK_KEY, lockValue, Duration.ofSeconds(30));
+        if (locked == null || !locked) {
+            return;
+        }
+
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime cutoff = now.minusMinutes(Math.max(1, claimTimeoutMinutes));
+            int recovered = callbackTaskRepo.resetStaleSendingTasks(
+                    cutoff, now, "发送超时，已重新入队");
+            if (recovered > 0) {
+                log.warn("回收超时回传任务: count={}, cutoff={}", recovered, cutoff);
+            }
+        } finally {
+            releaseLock(RECOVERY_LOCK_KEY, lockValue);
+        }
+    }
+
+    private void releaseLock(String key, String expectedValue) {
+        try {
+            // Safe release: only delete if we still own the lock
+            String currentValue = stringRedisTemplate.opsForValue().get(key);
+            if (expectedValue.equals(currentValue)) {
+                stringRedisTemplate.delete(key);
+            }
+        } catch (Exception e) {
+            log.warn("释放分布式锁失败: key={}", key, e);
         }
     }
 

@@ -42,6 +42,8 @@ attribution:
   click-cache-ttl-days: 7
   callback-worker-fixed-delay-ms: 10000
   callback-worker-claim-timeout-minutes: 10
+  click-rate-limit-max: 100
+  click-rate-limit-window-seconds: 60
 
 logging:
   level:

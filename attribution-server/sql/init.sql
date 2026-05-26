@@ -1,6 +1,10 @@
 -- ============================================
 -- 华为鲸鸿动能自归因平台 - 数据库初始化脚本
 -- ============================================
+-- ⚠️ 此文件仅供人工参考。生产环境表结构由 Flyway 管理。
+--    迁移脚本位置: attribution-server/src/main/resources/db/migration/
+--    如需添加新表或修改表结构，请创建新的 Flyway 迁移 (V3__xxx.sql)。
+-- ============================================
 
 CREATE DATABASE IF NOT EXISTS attribution
     DEFAULT CHARACTER SET utf8mb4

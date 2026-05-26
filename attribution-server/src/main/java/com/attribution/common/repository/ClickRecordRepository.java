@@ -19,6 +19,12 @@ public interface ClickRecordRepository extends JpaRepository<ClickRecord, Long> 
     @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since ORDER BY c.clickTime DESC")
     List<ClickRecord> findUnmatchedByGameAndTime(@Param("gameId") String gameId, @Param("since") Long since);
 
+    @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since AND c.ip LIKE CONCAT(:ipPrefix, '.%') ORDER BY c.clickTime DESC")
+    List<ClickRecord> findUnmatchedByGameTimeAndIpPrefix(@Param("gameId") String gameId,
+                                                          @Param("since") Long since,
+                                                          @Param("ipPrefix") String ipPrefix,
+                                                          org.springframework.data.domain.Pageable pageable);
+
     @Query("SELECT COUNT(c) FROM ClickRecord c WHERE c.createdAt BETWEEN :start AND :end")
     long countByCreatedAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
 

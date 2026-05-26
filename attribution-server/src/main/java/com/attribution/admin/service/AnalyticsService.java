@@ -1,17 +1,24 @@
 package com.attribution.admin.service;
 
 import com.attribution.admin.dto.DashboardDTO;
+import com.attribution.common.constant.EventConstants;
 import com.attribution.common.entity.AttributionRecord;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.ClickRecordRepository;
 import com.attribution.common.repository.GameConfigRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import jakarta.persistence.criteria.Predicate;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -22,28 +29,65 @@ import java.util.Map;
 @Service
 public class AnalyticsService {
 
+    private static final Logger log = LoggerFactory.getLogger(AnalyticsService.class);
+
     private static final List<String> CALLBACK_ATTEMPT_STATUSES = List.of("pending", "success", "failed");
+    private static final String DASHBOARD_CACHE_KEY = "attribution:dashboard:cache";
+    private static final long DASHBOARD_CACHE_TTL_SECONDS = 300; // 5 minutes
 
     private final AttributionRecordRepository attributionRepo;
     private final ClickRecordRepository clickRepo;
     private final GameConfigRepository gameConfigRepo;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final ObjectMapper objectMapper;
 
     public AnalyticsService(AttributionRecordRepository attributionRepo,
                             ClickRecordRepository clickRepo,
-                            GameConfigRepository gameConfigRepo) {
+                            GameConfigRepository gameConfigRepo,
+                            StringRedisTemplate stringRedisTemplate,
+                            ObjectMapper objectMapper) {
         this.attributionRepo = attributionRepo;
         this.clickRepo = clickRepo;
         this.gameConfigRepo = gameConfigRepo;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.objectMapper = objectMapper;
     }
 
+    /**
+     * Returns dashboard data with Redis caching.
+     * Cache TTL is 5 minutes to balance freshness and DB load.
+     */
     public DashboardDTO getDashboard() {
+        try {
+            String cached = stringRedisTemplate.opsForValue().get(DASHBOARD_CACHE_KEY);
+            if (cached != null && !cached.isEmpty()) {
+                return objectMapper.readValue(cached, DashboardDTO.class);
+            }
+        } catch (Exception e) {
+            log.debug("Dashboard 缓存读取失败，回退到数据库查询", e);
+        }
+
+        DashboardDTO dto = buildDashboardFromDb();
+
+        try {
+            String json = objectMapper.writeValueAsString(dto);
+            stringRedisTemplate.opsForValue()
+                    .set(DASHBOARD_CACHE_KEY, json, Duration.ofSeconds(DASHBOARD_CACHE_TTL_SECONDS));
+        } catch (JsonProcessingException e) {
+            log.warn("Dashboard 缓存写入失败", e);
+        }
+
+        return dto;
+    }
+
+    private DashboardDTO buildDashboardFromDb() {
         LocalDateTime todayStart = LocalDate.now().atStartOfDay();
         LocalDateTime todayEnd = LocalDate.now().atTime(LocalTime.MAX);
 
         DashboardDTO dto = new DashboardDTO();
         dto.setTodayClicks(clickRepo.countByCreatedAtBetween(todayStart, todayEnd));
-        dto.setTodayActivates(attributionRepo.countByEventAndSuccess("activate", todayStart, todayEnd));
-        dto.setTodayPurchases(attributionRepo.countByEventAndSuccess("purchase", todayStart, todayEnd));
+        dto.setTodayActivates(attributionRepo.countByEventAndSuccess(EventConstants.ACTIVATE, todayStart, todayEnd));
+        dto.setTodayPurchases(attributionRepo.countByEventAndSuccess(EventConstants.PURCHASE, todayStart, todayEnd));
         Double revenue = attributionRepo.sumRevenueByDate(todayStart, todayEnd);
         dto.setTodayRevenue(revenue != null ? revenue : 0.0);
         dto.setTotalGames(gameConfigRepo.count());
@@ -89,10 +133,10 @@ public class AnalyticsService {
         LocalDateTime start = startDate.atStartOfDay();
         LocalDateTime end = endDate.atTime(LocalTime.MAX);
 
-        long activates = attributionRepo.countByGameAndEventAndSuccess(gameId, "activate", start, end);
-        long purchases = attributionRepo.countByGameAndEventAndSuccess(gameId, "purchase", start, end);
+        long activates = attributionRepo.countByGameAndEventAndSuccess(gameId, EventConstants.ACTIVATE, start, end);
+        long purchases = attributionRepo.countByGameAndEventAndSuccess(gameId, EventConstants.PURCHASE, start, end);
         Double revenue = attributionRepo.sumRevenueByGameIdAndDate(gameId, start, end);
-        long registers = attributionRepo.countByGameAndEventAndSuccess(gameId, "register", start, end);
+        long registers = attributionRepo.countByGameAndEventAndSuccess(gameId, EventConstants.REGISTER, start, end);
 
         return Map.of(
                 "activates", activates,

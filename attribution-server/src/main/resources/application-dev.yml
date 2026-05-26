@@ -22,9 +22,13 @@ logging:
     com.attribution: DEBUG
 
 attribution:
-  encryption-key: ${ENCRYPTION_KEY:dev-attribution-secret-key-32!!}
+  encryption-key: ${ENCRYPTION_KEY:0123456789abcdef0123456789abcdef}
   api-key: ${ATTRIBUTION_API_KEY:dev-report-api-key}
 
 admin:
   username: ${ADMIN_USERNAME:admin}
   password: ${ADMIN_PASSWORD:admin123}
+
+# Note: the default encryption-key fallback is exactly 32 hex chars (valid 128-bit key).
+# In production, always set ENCRYPTION_KEY via environment variable.
+# This fallback exists only so that ./mvnw spring-boot:run works out of the box for local development.

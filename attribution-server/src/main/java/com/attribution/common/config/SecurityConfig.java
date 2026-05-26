@@ -20,7 +20,9 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http, ReportApiKeyFilter reportApiKeyFilter)
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                    ReportApiKeyFilter reportApiKeyFilter,
+                                                    ClickRateLimitFilter clickRateLimitFilter)
             throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -29,12 +31,13 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/api/v1/health", "/api/v1/click").permitAll()
+                        .requestMatchers("/api/v1/health", "/api/v1/health/**", "/api/v1/click").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/report").permitAll()
                         .requestMatchers("/admin/api/**").hasRole("ADMIN")
                         .anyRequest().permitAll()
                 )
                 .httpBasic(Customizer.withDefaults())
+                .addFilterBefore(clickRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(reportApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }

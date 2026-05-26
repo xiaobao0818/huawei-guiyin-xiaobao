@@ -108,7 +108,7 @@ const query = reactive({
 async function search() {
   loading.value = true
   try {
-    const res: any = await queryAttributions({ ...query, page: query.page - 1 })
+    const res: any = await queryAttributions({ ...query })
     if (res.data) {
       records.value = res.data.content || []
       total.value = res.data.totalElements || 0

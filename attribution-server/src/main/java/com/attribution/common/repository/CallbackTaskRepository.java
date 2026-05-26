@@ -34,4 +34,10 @@ public interface CallbackTaskRepository extends JpaRepository<CallbackTask, Long
     int resetStaleSendingTasks(@Param("cutoff") LocalDateTime cutoff,
                                @Param("now") LocalDateTime now,
                                @Param("lastError") String lastError);
+
+    @Transactional
+    @Modifying
+    @Query("DELETE FROM CallbackTask t WHERE t.status IN :statuses AND t.createdAt < :cutoff")
+    int deleteCompletedBefore(@Param("cutoff") LocalDateTime cutoff,
+                               @Param("statuses") Collection<String> statuses);
 }
