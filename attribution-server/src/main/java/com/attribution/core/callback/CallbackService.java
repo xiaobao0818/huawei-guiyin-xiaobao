@@ -39,8 +39,8 @@ public class CallbackService {
     public CallbackService(RestTemplateBuilder restTemplateBuilder, ObjectMapper objectMapper,
                           CallbackLogWriter logWriter, AttributionRecordRepository attributionRecordRepo) {
         this.restTemplate = restTemplateBuilder
-                .connectTimeout(Duration.ofSeconds(5))
-                .readTimeout(Duration.ofSeconds(15))
+                .setConnectTimeout(Duration.ofSeconds(5))
+                .setReadTimeout(Duration.ofSeconds(15))
                 .build();
         this.objectMapper = objectMapper;
         this.logWriter = logWriter;
