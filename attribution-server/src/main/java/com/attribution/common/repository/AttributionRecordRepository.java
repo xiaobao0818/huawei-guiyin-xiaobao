@@ -17,7 +17,11 @@ public interface AttributionRecordRepository extends JpaRepository<AttributionRe
 
     Optional<AttributionRecord> findFirstByGameIdAndOaidAndEventType(String gameId, String oaid, String eventType);
 
+    Optional<AttributionRecord> findFirstByGameIdAndOaidAndEventTypeOrderByCreatedAtDesc(String gameId, String oaid, String eventType);
+
     boolean existsByGameIdAndOaidAndEventType(String gameId, String oaid, String eventType);
+
+    List<AttributionRecord> findByGameIdAndEventTypeAndCallbackStatusAndCreatedAtAfter(String gameId, String eventType, String callbackStatus, java.time.LocalDateTime after);
 
     boolean existsByDedupeKey(String dedupeKey);
 

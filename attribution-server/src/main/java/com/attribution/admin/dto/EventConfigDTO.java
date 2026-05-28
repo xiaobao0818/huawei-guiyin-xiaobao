@@ -15,6 +15,7 @@ public class EventConfigDTO {
     private String displayName;
     private String conversionType;
     private String paramSchema;
+    private String callbackRule;
     private Boolean enabled = true;
 
     public Long getId() { return id; }
@@ -29,6 +30,8 @@ public class EventConfigDTO {
     public void setConversionType(String conversionType) { this.conversionType = conversionType; }
     public String getParamSchema() { return paramSchema; }
     public void setParamSchema(String paramSchema) { this.paramSchema = paramSchema; }
+    public String getCallbackRule() { return callbackRule; }
+    public void setCallbackRule(String callbackRule) { this.callbackRule = callbackRule; }
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
 }

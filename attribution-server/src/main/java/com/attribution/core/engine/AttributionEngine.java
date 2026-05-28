@@ -40,6 +40,7 @@ public class AttributionEngine {
     private final OaidMatcher oaidMatcher;
     private final FingerprintMatcher fingerprintMatcher;
     private final CallbackRetryService retryService;
+    private final CallbackRuleEvaluator ruleEvaluator;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper objectMapper;
     private final AttributionMetrics metrics;
@@ -57,6 +58,7 @@ public class AttributionEngine {
                              OaidMatcher oaidMatcher,
                              FingerprintMatcher fingerprintMatcher,
                              CallbackRetryService retryService,
+                             CallbackRuleEvaluator ruleEvaluator,
                              RedisTemplate<String, Object> redisTemplate,
                              ObjectMapper objectMapper,
                              AttributionMetrics metrics) {
@@ -67,6 +69,7 @@ public class AttributionEngine {
         this.oaidMatcher = oaidMatcher;
         this.fingerprintMatcher = fingerprintMatcher;
         this.retryService = retryService;
+        this.ruleEvaluator = ruleEvaluator;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.metrics = metrics;
@@ -95,9 +98,11 @@ public class AttributionEngine {
         }
 
         String conversionType = eventDef.getConversionType();
-        boolean needCallback = conversionType != null && !conversionType.isEmpty();
+        boolean needCallback = ruleEvaluator.shouldCallback(eventDef, request);
 
-        // 3. 如果是activate，先去重（oaid 为空时跳过，避免不同设备共享锁）
+        boolean isReattribution = false;
+
+        // 3. 如果是activate，检查再归因
         if ("activate".equals(request.getEvent())) {
             String oaid = getOaid(request);
             if (oaid != null && !oaid.isEmpty()) {
@@ -105,8 +110,12 @@ public class AttributionEngine {
                 Boolean locked = redisTemplate.opsForValue()
                         .setIfAbsent(lockKey, "1", 180, TimeUnit.DAYS);
                 if (locked == null || !locked) {
-                    log.info("激活已处理过，跳过: game={}, oaid={}", request.getGameId(), oaid);
-                    return ProcessResult.ok(null, "already_processed", null);
+                    // 锁已存在，检查是否应触发再归因
+                    isReattribution = checkReattribution(request.getGameId(), oaid, gameConfig);
+                    if (!isReattribution) {
+                        log.info("激活在保护期内，跳过: game={}, oaid={}", request.getGameId(), oaid);
+                        return ProcessResult.ok(null, "already_processed", null);
+                    }
                 }
             }
         }
@@ -272,6 +281,41 @@ public class AttributionEngine {
         return request.getDevice() != null ? request.getDevice().getOaid() : "";
     }
 
+    private boolean checkReattribution(String gameId, String oaid, GameConfig gameConfig) {
+        var existingOpt = attributionRecordRepo.findFirstByGameIdAndOaidAndEventTypeOrderByCreatedAtDesc(
+                gameId, oaid, "activate");
+        if (existingOpt.isEmpty()) return false;
+
+        var existing = existingOpt.get();
+        var config = parseWindowConfig(gameConfig.getWindowConfig());
+        int protectionDays = getConfigInt(config, "protection_days", 7);
+        int silenceDays = getConfigInt(config, "silence_days", 3);
+
+        LocalDateTime lastActive = existing.getCreatedAt();
+        if (lastActive == null) return false;
+
+        long daysSinceLastActive = java.time.Duration.between(lastActive, LocalDateTime.now()).toDays();
+        if (daysSinceLastActive < protectionDays) {
+            return false; // 在保护期内
+        }
+        return daysSinceLastActive >= silenceDays; // 超过沉默期才允许再归因
+    }
+
+    private Map<String, Object> parseWindowConfig(String json) {
+        if (json == null || json.isBlank()) return Map.of();
+        try {
+            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private int getConfigInt(Map<String, Object> config, String key, int defaultVal) {
+        Object val = config.get(key);
+        if (val instanceof Number n) return n.intValue();
+        return defaultVal;
+    }
+
     private String buildDedupeKey(ReportRequest request) {
         String oaid = getOaid(request);
         String source = null;
@@ -367,6 +411,8 @@ public class AttributionEngine {
         private Map<String, String> fingerprint;
         private AppInfo app;
         private Long ts;
+        private boolean async;
+        private boolean debugMode;
 
         public String getGameId() { return gameId; }
         public void setGameId(String gameId) { this.gameId = gameId; }
@@ -384,6 +430,10 @@ public class AttributionEngine {
         public void setApp(AppInfo app) { this.app = app; }
         public Long getTs() { return ts; }
         public void setTs(Long ts) { this.ts = ts; }
+        public boolean isAsync() { return async; }
+        public void setAsync(boolean async) { this.async = async; }
+        public boolean isDebugMode() { return debugMode; }
+        public void setDebugMode(boolean debugMode) { this.debugMode = debugMode; }
     }
 
     public static class DeviceInfo {

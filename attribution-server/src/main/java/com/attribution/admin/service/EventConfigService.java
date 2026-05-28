@@ -43,6 +43,7 @@ public class EventConfigService {
         def.setDisplayName(dto.getDisplayName());
         def.setConversionType(dto.getConversionType());
         def.setParamSchema(dto.getParamSchema());
+        def.setCallbackRule(dto.getCallbackRule());
         def.setEnabled(dto.getEnabled());
         def.setIsPreset(false);
         EventDefinition saved = eventDefRepo.save(def);
@@ -56,6 +57,7 @@ public class EventConfigService {
         def.setDisplayName(dto.getDisplayName());
         def.setConversionType(dto.getConversionType());
         def.setParamSchema(dto.getParamSchema());
+        def.setCallbackRule(dto.getCallbackRule());
         def.setEnabled(dto.getEnabled());
         EventDefinition saved = eventDefRepo.save(def);
         eventRouter.clearCache(def.getGameId(), def.getEventName());

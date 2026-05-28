@@ -29,6 +29,9 @@ public class GameConfig {
     @Column(name = "callback_retry_max")
     private Integer callbackRetryMax = 3;
 
+    @Column(name = "window_config", columnDefinition = "JSON")
+    private String windowConfig;
+
     @Column(name = "fingerprint_fallback")
     private Boolean fingerprintFallback = true;
 
@@ -58,6 +61,8 @@ public class GameConfig {
     public void setAttributionWindowDays(Integer attributionWindowDays) { this.attributionWindowDays = attributionWindowDays; }
     public Integer getCallbackRetryMax() { return callbackRetryMax; }
     public void setCallbackRetryMax(Integer callbackRetryMax) { this.callbackRetryMax = callbackRetryMax; }
+    public String getWindowConfig() { return windowConfig; }
+    public void setWindowConfig(String windowConfig) { this.windowConfig = windowConfig; }
     public Boolean getFingerprintFallback() { return fingerprintFallback; }
     public void setFingerprintFallback(Boolean fingerprintFallback) { this.fingerprintFallback = fingerprintFallback; }
     public Boolean getStatus() { return status; }

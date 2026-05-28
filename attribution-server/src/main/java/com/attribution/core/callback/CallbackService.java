@@ -34,17 +34,17 @@ public class CallbackService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
-    private final CallbackLogRepository callbackLogRepo;
+    private final CallbackLogWriter logWriter;
     private final AttributionRecordRepository attributionRecordRepo;
 
-    public CallbackService(RestTemplateBuilder restTemplateBuilder, ObjectMapper objectMapper, CallbackLogRepository callbackLogRepo,
-                          AttributionRecordRepository attributionRecordRepo) {
+    public CallbackService(RestTemplateBuilder restTemplateBuilder, ObjectMapper objectMapper,
+                          CallbackLogWriter logWriter, AttributionRecordRepository attributionRecordRepo) {
         this.restTemplate = restTemplateBuilder
                 .connectTimeout(Duration.ofSeconds(5))
                 .readTimeout(Duration.ofSeconds(15))
                 .build();
         this.objectMapper = objectMapper;
-        this.callbackLogRepo = callbackLogRepo;
+        this.logWriter = logWriter;
         this.attributionRecordRepo = attributionRecordRepo;
     }
 
@@ -79,7 +79,7 @@ public class CallbackService {
             cbLog.setDurationMs(duration);
 
             try {
-                callbackLogRepo.save(cbLog);
+                logWriter.enqueue(cbLog);
             } catch (Exception e) {
                 log.error("保存回传日志失败", e);
             }

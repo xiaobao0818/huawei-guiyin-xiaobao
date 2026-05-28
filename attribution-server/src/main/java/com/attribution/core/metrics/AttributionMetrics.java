@@ -1,9 +1,12 @@
 package com.attribution.core.metrics;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * Business metrics for the attribution pipeline.
@@ -115,5 +118,33 @@ public class AttributionMetrics {
                 .tag("attempt", String.valueOf(attempt))
                 .register(registry)
                 .increment();
+    }
+
+    /** Record funnel stage transition. */
+    public void recordFunnel(String stage, String gameId) {
+        Counter.builder("attribution.funnel")
+                .description("Attribution funnel: received/matched/enqueued/sent/success")
+                .tag("stage", stage)
+                .tag("game", gameId)
+                .register(registry)
+                .increment();
+    }
+
+    /** Record callback latency. */
+    public void recordCallbackLatency(String gameId, long durationMs) {
+        Timer.builder("attribution.callback.latency")
+                .description("Callback HTTP request latency")
+                .tag("game", gameId)
+                .register(registry)
+                .record(durationMs, TimeUnit.MILLISECONDS);
+    }
+
+    /** Record match operation latency. */
+    public void recordMatchLatency(String gameId, long durationMs) {
+        Timer.builder("attribution.match.latency")
+                .description("Attribution match operation latency")
+                .tag("game", gameId)
+                .register(registry)
+                .record(durationMs, TimeUnit.MILLISECONDS);
     }
 }

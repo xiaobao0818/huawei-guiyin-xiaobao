@@ -72,6 +72,11 @@
           <el-input v-model="form.paramSchema" type="textarea" :rows="4"
             placeholder='[{"key":"revenue","type":"number","required":true,"desc":"金额"}]' />
         </el-form-item>
+        <el-form-item label="回传规则">
+          <el-input v-model="form.callbackRule" type="textarea" :rows="3"
+            placeholder='付费阈值: {"type":"threshold","field":"eventParams.revenue","operator":"gte","value":6.0}&#10;时间窗口: {"type":"time_window","window_minutes":1440,"scope":"game:oaid"}&#10;留空表示无条件回传' />
+          <div style="font-size:12px;color:#909399;margin-top:4px">JSON格式，留空=无条件回传。类型: threshold / time_window / and / or</div>
+        </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
         </el-form-item>
@@ -98,7 +103,7 @@ const saving = ref(false)
 const dialogVisible = ref(false)
 const editing = ref<EventDefinition | null>(null)
 
-const defaultForm: EventConfigForm = { eventName: '', displayName: '', conversionType: '', paramSchema: '', enabled: true }
+const defaultForm: EventConfigForm = { eventName: '', displayName: '', conversionType: '', paramSchema: '', callbackRule: '', enabled: true }
 const form = ref<EventConfigForm>({ ...defaultForm })
 
 onMounted(async () => {
@@ -125,6 +130,7 @@ function openDialog(row?: EventDefinition) {
       displayName: row.displayName,
       conversionType: row.conversionType || '',
       paramSchema: row.paramSchema || '',
+      callbackRule: row.callbackRule || '',
       enabled: row.enabled,
     }
   } else {

@@ -62,6 +62,12 @@ public class AttributionRecord {
     @Column(name = "callback_response", columnDefinition = "TEXT")
     private String callbackResponse;
 
+    @Column(name = "debug_mode")
+    private Boolean debugMode = false;
+
+    @Column(name = "reattribution")
+    private Boolean reattribution = false;
+
     @Column(name = "retry_count")
     private Integer retryCount = 0;
 
@@ -106,6 +112,10 @@ public class AttributionRecord {
     public void setCallbackStatus(String callbackStatus) { this.callbackStatus = callbackStatus; }
     public String getCallbackResponse() { return callbackResponse; }
     public void setCallbackResponse(String callbackResponse) { this.callbackResponse = callbackResponse; }
+    public Boolean getDebugMode() { return debugMode; }
+    public void setDebugMode(Boolean debugMode) { this.debugMode = debugMode; }
+    public Boolean getReattribution() { return reattribution; }
+    public void setReattribution(Boolean reattribution) { this.reattribution = reattribution; }
     public Integer getRetryCount() { return retryCount; }
     public void setRetryCount(Integer retryCount) { this.retryCount = retryCount; }
     public String getDedupeKey() { return dedupeKey; }

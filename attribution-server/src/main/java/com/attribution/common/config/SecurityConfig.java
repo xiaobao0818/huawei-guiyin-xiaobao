@@ -22,7 +22,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                     ReportApiKeyFilter reportApiKeyFilter,
-                                                    ClickRateLimitFilter clickRateLimitFilter)
+                                                    ClickRateLimitFilter clickRateLimitFilter,
+                                                    DebugApiKeyFilter debugApiKeyFilter)
             throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -40,6 +41,7 @@ public class SecurityConfig {
                         .anyRequest().permitAll()
                 )
                 .httpBasic(Customizer.withDefaults())
+                .addFilterBefore(debugApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(clickRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(reportApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

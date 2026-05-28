@@ -50,6 +50,7 @@ export interface EventDefinition {
   displayName: string
   conversionType: string | null
   paramSchema: string | null
+  callbackRule: string | null
   isPreset: boolean
   enabled: boolean
   createdAt: string
@@ -62,6 +63,7 @@ export interface EventConfigForm {
   displayName: string
   conversionType: string
   paramSchema: string
+  callbackRule: string
   enabled: boolean
 }
 

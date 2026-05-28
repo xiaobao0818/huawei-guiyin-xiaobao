@@ -28,6 +28,9 @@ public class EventDefinition {
     @Column(name = "param_schema", columnDefinition = "JSON")
     private String paramSchema;
 
+    @Column(name = "callback_rule", columnDefinition = "JSON")
+    private String callbackRule;
+
     @Column(name = "is_preset")
     private Boolean isPreset = false;
 
@@ -55,6 +58,8 @@ public class EventDefinition {
     public void setConversionType(String conversionType) { this.conversionType = conversionType; }
     public String getParamSchema() { return paramSchema; }
     public void setParamSchema(String paramSchema) { this.paramSchema = paramSchema; }
+    public String getCallbackRule() { return callbackRule; }
+    public void setCallbackRule(String callbackRule) { this.callbackRule = callbackRule; }
     public Boolean getIsPreset() { return isPreset; }
     public void setIsPreset(Boolean isPreset) { this.isPreset = isPreset; }
     public Boolean getEnabled() { return enabled; }
