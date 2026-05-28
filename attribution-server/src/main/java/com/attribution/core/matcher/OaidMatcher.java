@@ -33,8 +33,22 @@ public class OaidMatcher {
         if (oaid == null || oaid.isEmpty()) {
             return null;
         }
+        return matchByDeviceIdInternal(gameId, oaid, "oaid", attributionWindowDays);
+    }
 
-        String redisKey = RedisKeyUtil.clickCacheKey(gameId, oaid);
+    public MatchResult matchByDeviceId(String gameId, String deviceId, String idType,
+                                        int attributionWindowDays) {
+        if (deviceId == null || deviceId.isEmpty()) {
+            return null;
+        }
+        return matchByDeviceIdInternal(gameId, deviceId, idType, attributionWindowDays);
+    }
+
+    private MatchResult matchByDeviceIdInternal(String gameId, String deviceId,
+                                                  String idType, int attributionWindowDays) {
+        String redisKey = RedisKeyUtil.deviceClickCacheKey(gameId, idType, deviceId);
+
+        // 1. Try Redis cache first
         Object cached = redisTemplate.opsForValue().get(redisKey);
         if (cached != null) {
             ClickCache clickCache;
@@ -43,20 +57,21 @@ public class OaidMatcher {
             } else {
                 clickCache = objectMapper.convertValue(cached, ClickCache.class);
             }
-
             long windowMs = (long) attributionWindowDays * 24 * 60 * 60 * 1000;
             if (System.currentTimeMillis() - clickCache.getClickTime() <= windowMs) {
-                log.debug("Redis 匹配成功: game={}, oaid={}", gameId, oaid);
-                return new MatchResult(clickCache, "oaid", null);
+                log.debug("{} 匹配成功(Redis): game={}, deviceId={}", idType, gameId, deviceId);
+                return new MatchResult(clickCache, idType, null);
             }
         }
 
+        // 2. Fall back to MySQL
         long windowMs = (long) attributionWindowDays * 24 * 60 * 60 * 1000;
-        return clickRepo.findFirstByGameIdAndOaidAndMatchedFalseOrderByClickTimeDesc(gameId, oaid)
+        return clickRepo.findFirstByGameIdAndOaidAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId)
                 .map(click -> {
                     long elapsedMs = System.currentTimeMillis() - click.getClickTime();
                     if (elapsedMs > windowMs) {
-                        log.debug("MySQL 匹配过期: game={}, oaid={}, clickTime={}", gameId, oaid, click.getClickTime());
+                        log.debug("{} 匹配过期(MySQL): game={}, deviceId={}, clickTime={}",
+                                idType, gameId, deviceId, click.getClickTime());
                         return null;
                     }
                     ClickCache cc = toClickCache(click);
@@ -64,14 +79,14 @@ public class OaidMatcher {
                     if (ttlSeconds > 0) {
                         redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
                     }
-                    log.debug("MySQL 匹配成功: game={}, oaid={}", gameId, oaid);
-                    return new MatchResult(cc, "oaid", click.getId());
+                    log.debug("{} 匹配成功(MySQL): game={}, deviceId={}", idType, gameId, deviceId);
+                    return new MatchResult(cc, idType, click.getId());
                 })
                 .orElse(null);
     }
 
     private ClickCache toClickCache(ClickRecord click) {
-        return new ClickCache(
+        ClickCache cc = new ClickCache(
                 click.getCallback(),
                 click.getCampaignId(),
                 click.getAdgroupId(),
@@ -81,6 +96,8 @@ public class OaidMatcher {
                 click.getActionType(),
                 click.getTrackingEnabled()
         );
+        cc.setOaid(click.getOaid());
+        return cc;
     }
 
     public static class MatchResult {

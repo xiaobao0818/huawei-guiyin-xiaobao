@@ -13,6 +13,9 @@ public class ClickCache implements Serializable {
     private String platform;
     private String actionType;
     private String trackingEnabled;
+    private String oaid;
+    private String gaid;
+    private String idfa;
     private boolean converted;
 
     public ClickCache() {}
@@ -46,6 +49,12 @@ public class ClickCache implements Serializable {
     public void setActionType(String actionType) { this.actionType = actionType; }
     public String getTrackingEnabled() { return trackingEnabled; }
     public void setTrackingEnabled(String trackingEnabled) { this.trackingEnabled = trackingEnabled; }
+    public String getOaid() { return oaid; }
+    public void setOaid(String oaid) { this.oaid = oaid; }
+    public String getGaid() { return gaid; }
+    public void setGaid(String gaid) { this.gaid = gaid; }
+    public String getIdfa() { return idfa; }
+    public void setIdfa(String idfa) { this.idfa = idfa; }
     public boolean isConverted() { return converted; }
     public void setConverted(boolean converted) { this.converted = converted; }
 }

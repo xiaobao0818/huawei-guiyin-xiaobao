@@ -12,6 +12,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 @RestController
@@ -79,7 +81,11 @@ public class ClickController {
             return "error";
         }
 
-        String decodedCallback = callback;
+        String decodedCallback = decodeCallback(callback);
+        if (decodedCallback.isEmpty()) {
+            log.warn("点击回调 callback 解码失败: game={}", gameId);
+            return "error";
+        }
 
         String safeOaid = oaid != null ? oaid.substring(0, Math.min(oaid.length(), 128)) : "";
         String finalUa = ua != null ? ua : userAgent;
@@ -92,6 +98,7 @@ public class ClickController {
                     decodedCallback, campaignId, adgroupId, contentId,
                     clickTime, platform, actionType, trackingEnabled
             );
+            cache.setOaid(safeOaid);
             redisTemplate.opsForValue().set(redisKey, cache, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
         }
 
@@ -118,6 +125,20 @@ public class ClickController {
         log.info("点击回调: game={}, oaid={}, campaign={}", gameId, safeOaid, campaignId);
         metrics.recordClickReceived(gameId);
         return "success";
+    }
+
+    private String decodeCallback(String raw) {
+        if (raw == null || raw.isEmpty()) return "";
+        // Spring @RequestParam already decodes query params, but
+        // the callback URL itself may contain encoded characters
+        try {
+            String decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8);
+            return decoded != null ? decoded : raw;
+        } catch (Exception e) {
+            // If decoding fails (malformed encoding), use raw value
+            log.debug("callback URL 解码失败, 使用原始值: {}", raw);
+            return raw;
+        }
     }
 
     private long normalizedClickCacheTtlDays() {

@@ -120,20 +120,39 @@ public class AttributionEngine {
             }
         }
 
-        // 4. 尝试归因匹配 (始终执行，不以 needCallback 为条件)
+        // 4. 多设备ID匹配: OAID → GAID → IDFA → 指纹降级
         OaidMatcher.MatchResult matchResult = null;
         String attributionType = null;
 
-        String oaid = getOaid(request);
-
         // 4a. OAID 精确匹配
+        String oaid = getOaid(request);
         if (oaid != null && !oaid.isEmpty()) {
             matchResult = oaidMatcher.match(request.getGameId(), oaid,
                     gameConfig.getAttributionWindowDays());
             attributionType = "oaid";
         }
 
-        // 4b. 指纹降级匹配
+        // 4b. GAID 降级匹配
+        if (matchResult == null) {
+            String gaid = getGaid(request);
+            if (gaid != null && !gaid.isEmpty()) {
+                matchResult = oaidMatcher.matchByDeviceId(request.getGameId(), gaid, "gaid",
+                        gameConfig.getAttributionWindowDays());
+                attributionType = "gaid";
+            }
+        }
+
+        // 4c. IDFA 降级匹配
+        if (matchResult == null) {
+            String idfa = getIdfa(request);
+            if (idfa != null && !idfa.isEmpty()) {
+                matchResult = oaidMatcher.matchByDeviceId(request.getGameId(), idfa, "idfa",
+                        gameConfig.getAttributionWindowDays());
+                attributionType = "idfa";
+            }
+        }
+
+        // 4d. 指纹降级匹配
         if (matchResult == null && Boolean.TRUE.equals(gameConfig.getFingerprintFallback())
                 && request.getFingerprint() != null && !request.getFingerprint().isEmpty()) {
             Long clickId = fingerprintMatcher.matchByFingerprint(
@@ -242,20 +261,13 @@ public class AttributionEngine {
 
         // 7. 异步回传
         if (needCallback && matchResult != null) {
-            AttributionContext ctx = new AttributionContext();
-            ctx.setAttributionRecordId(record.getId());
-            ctx.setGameId(request.getGameId());
-            ctx.setOaid(getOaid(request));
-            ctx.setEventType(request.getEvent());
-            ctx.setConversionType(conversionType);
-            ctx.setCallback(matchResult.getClickCache().getCallback());
-            ctx.setConversionTime(record.getConversionTime());
-            ctx.setRevenue(record.getRevenue());
-            ctx.setCurrency(record.getCurrency());
-            ctx.setContentId(matchResult.getClickCache().getContentId());
-            ctx.setCampaignId(matchResult.getClickCache().getCampaignId());
-            ctx.setTrackingEnabled(matchResult.getClickCache().getTrackingEnabled());
+            AttributionContext ctx = buildAttributionContext(record, matchResult, request, conversionType);
+            retryService.enqueue(ctx, gameConfig);
+        }
 
+        // 7b. 再归因回传
+        if (isReattribution && matchResult != null) {
+            AttributionContext ctx = buildAttributionContext(record, matchResult, request, conversionType);
             retryService.enqueue(ctx, gameConfig);
         }
 
@@ -264,10 +276,11 @@ public class AttributionEngine {
 
         // Record metrics
         if (matchResult != null) {
-            if ("oaid".equals(matchResult.getMatchType())) {
-                metrics.recordMatchOaid(request.getGameId());
-            } else if ("fingerprint".equals(matchResult.getMatchType())) {
-                metrics.recordMatchFingerprint(request.getGameId());
+            switch (matchResult.getMatchType()) {
+                case "oaid" -> metrics.recordMatchOaid(request.getGameId());
+                case "gaid", "idfa" -> metrics.recordMatchFingerprint(request.getGameId());
+                case "fingerprint" -> metrics.recordMatchFingerprint(request.getGameId());
+                default -> {}
             }
         } else if (needCallback) {
             metrics.recordNoMatch(request.getGameId());
@@ -277,8 +290,37 @@ public class AttributionEngine {
         return ProcessResult.ok(record.getId(), matchResult != null ? "matched" : "no_match", conversionType);
     }
 
+    private AttributionContext buildAttributionContext(AttributionRecord record,
+                                                       OaidMatcher.MatchResult matchResult,
+                                                       ReportRequest request,
+                                                       String conversionType) {
+        AttributionContext ctx = new AttributionContext();
+        ctx.setAttributionRecordId(record.getId());
+        ctx.setGameId(request.getGameId());
+        ctx.setOaid(getOaid(request));
+        ctx.setEventType(request.getEvent());
+        ctx.setConversionType(conversionType);
+        ctx.setCallback(matchResult.getClickCache().getCallback());
+        ctx.setConversionTime(record.getConversionTime());
+        ctx.setRevenue(record.getRevenue());
+        ctx.setCurrency(record.getCurrency());
+        ctx.setContentId(matchResult.getClickCache().getContentId());
+        ctx.setCampaignId(matchResult.getClickCache().getCampaignId());
+        ctx.setTrackingEnabled(matchResult.getClickCache().getTrackingEnabled());
+        return ctx;
+    }
+
+
     private String getOaid(ReportRequest request) {
         return request.getDevice() != null ? request.getDevice().getOaid() : "";
+    }
+
+    private String getGaid(ReportRequest request) {
+        return request.getDevice() != null ? request.getDevice().getGaid() : "";
+    }
+
+    private String getIdfa(ReportRequest request) {
+        return request.getDevice() != null ? request.getDevice().getIdfa() : "";
     }
 
     private boolean checkReattribution(String gameId, String oaid, GameConfig gameConfig) {
@@ -438,8 +480,14 @@ public class AttributionEngine {
 
     public static class DeviceInfo {
         private String oaid;
+        private String gaid;
+        private String idfa;
         public String getOaid() { return oaid; }
         public void setOaid(String oaid) { this.oaid = oaid; }
+        public String getGaid() { return gaid; }
+        public void setGaid(String gaid) { this.gaid = gaid; }
+        public String getIdfa() { return idfa; }
+        public void setIdfa(String idfa) { this.idfa = idfa; }
     }
 
     public static class AppInfo {

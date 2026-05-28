@@ -97,6 +97,11 @@ public class CallbackRetryService {
             List<CallbackTask> dueTasks = callbackTaskRepo
                     .findTop50ByStatusInAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(
                             CallbackStatus.DUE_STATUSES, LocalDateTime.now());
+
+            // Report queue depth metric
+            long queueDepth = callbackTaskRepo.countByStatusIn(CallbackStatus.DUE_STATUSES);
+            metrics.setCallbackQueueDepth(queueDepth);
+
             for (CallbackTask task : dueTasks) {
                 if (callbackTaskRepo.claimTask(task.getId(), CallbackStatus.DUE_STATUSES, LocalDateTime.now()) == 1) {
                     processClaimedTask(task.getId());

@@ -50,6 +50,10 @@ public class ClickRecord {
     @Column(name = "matched")
     private Boolean matched = false;
 
+    @Version
+    @Column(name = "version")
+    private Long version = 0L;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -83,6 +87,8 @@ public class ClickRecord {
     public void setTrackingEnabled(String trackingEnabled) { this.trackingEnabled = trackingEnabled; }
     public Boolean getMatched() { return matched; }
     public void setMatched(Boolean matched) { this.matched = matched; }
+    public Long getVersion() { return version; }
+    public void setVersion(Long version) { this.version = version; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

@@ -9,6 +9,10 @@ public class RedisKeyUtil {
         return CLICK_CACHE_PREFIX + ":" + gameId + ":" + oaid;
     }
 
+    public static String deviceClickCacheKey(String gameId, String idType, String deviceId) {
+        return CLICK_CACHE_PREFIX + ":" + idType + ":" + gameId + ":" + deviceId;
+    }
+
     public static String activeLockKey(String gameId, String oaid) {
         return ACTIVE_LOCK_PREFIX + ":" + gameId + ":" + oaid;
     }

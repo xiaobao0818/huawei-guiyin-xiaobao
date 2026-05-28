@@ -41,4 +41,7 @@ public interface CallbackTaskRepository extends JpaRepository<CallbackTask, Long
     int deleteCompletedBefore(@Param("cutoff") LocalDateTime cutoff,
                                @Param("statuses") Collection<String> statuses,
                                @Param("limit") int limit);
+
+    @Query("SELECT COUNT(t) FROM CallbackTask t WHERE t.status IN :statuses")
+    long countByStatusIn(@Param("statuses") Collection<String> statuses);
 }

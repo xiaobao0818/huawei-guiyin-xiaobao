@@ -147,4 +147,11 @@ public class AttributionMetrics {
                 .register(registry)
                 .record(durationMs, TimeUnit.MILLISECONDS);
     }
+
+    /** Set the current callback task queue depth (pending + retry_pending). */
+    public void setCallbackQueueDepth(long count) {
+        registry.gauge("attribution.callback.queue_depth",
+                io.micrometer.core.instrument.Tags.of("queue", "callback"),
+                count);
+    }
 }
