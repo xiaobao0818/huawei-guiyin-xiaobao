@@ -64,19 +64,22 @@ public class CallbackRuleEvaluator {
             case "gt" -> numValue > threshold;
             case "lte" -> numValue <= threshold;
             case "lt" -> numValue < threshold;
-            case "eq" -> numValue == threshold;
+            case "eq" -> Math.abs(numValue - threshold) < 1e-9;
             default -> true;
         };
     }
 
     private boolean evalTimeWindow(CallbackRule rule, AttributionEngine.ReportRequest request) {
+        Integer windowMinutes = rule.getWindowMinutes();
+        if (windowMinutes == null || windowMinutes <= 0) return true;
+
         String scope = rule.getScope() != null ? rule.getScope() : "game:oaid";
         String oaid = request.getDevice() != null ? request.getDevice().getOaid() : "";
         if (oaid == null || oaid.isEmpty()) return true;
 
         String key = RULE_LOCK_PREFIX + scope + ":" + request.getGameId() + ":" + request.getEvent() + ":" + oaid;
         Boolean locked = stringRedisTemplate.opsForValue()
-                .setIfAbsent(key, "1", rule.getWindowMinutes(), TimeUnit.MINUTES);
+                .setIfAbsent(key, "1", windowMinutes, TimeUnit.MINUTES);
         return locked != null && locked;
     }
 

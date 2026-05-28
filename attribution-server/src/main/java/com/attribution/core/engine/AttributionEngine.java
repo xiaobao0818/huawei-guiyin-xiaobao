@@ -120,38 +120,36 @@ public class AttributionEngine {
             }
         }
 
-        // 4. 尝试归因匹配
+        // 4. 尝试归因匹配 (始终执行，不以 needCallback 为条件)
         OaidMatcher.MatchResult matchResult = null;
         String attributionType = null;
 
-        if (needCallback) {
-            String oaid = getOaid(request);
+        String oaid = getOaid(request);
 
-            // 4a. OAID 精确匹配
-            if (oaid != null && !oaid.isEmpty()) {
-                matchResult = oaidMatcher.match(request.getGameId(), oaid,
-                        gameConfig.getAttributionWindowDays());
-                attributionType = "oaid";
-            }
+        // 4a. OAID 精确匹配
+        if (oaid != null && !oaid.isEmpty()) {
+            matchResult = oaidMatcher.match(request.getGameId(), oaid,
+                    gameConfig.getAttributionWindowDays());
+            attributionType = "oaid";
+        }
 
-            // 4b. 指纹降级匹配
-            if (matchResult == null && Boolean.TRUE.equals(gameConfig.getFingerprintFallback())
-                    && request.getFingerprint() != null && !request.getFingerprint().isEmpty()) {
-                Long clickId = fingerprintMatcher.matchByFingerprint(
-                        request.getGameId(), request.getFingerprint(), normalizedFingerprintMatchMinutes());
-                if (clickId != null) {
-                    var clickOpt = clickRecordRepo.findById(clickId);
-                    if (clickOpt.isPresent()) {
-                        var click = clickOpt.get();
-                        var cc = new ClickCache(
-                                click.getCallback(), click.getCampaignId(),
-                                click.getAdgroupId(), click.getContentId(),
-                                click.getClickTime(), click.getPlatform(),
-                                click.getActionType(), click.getTrackingEnabled()
-                        );
-                        matchResult = new OaidMatcher.MatchResult(cc, "fingerprint", click.getId());
-                        attributionType = "fingerprint";
-                    }
+        // 4b. 指纹降级匹配
+        if (matchResult == null && Boolean.TRUE.equals(gameConfig.getFingerprintFallback())
+                && request.getFingerprint() != null && !request.getFingerprint().isEmpty()) {
+            Long clickId = fingerprintMatcher.matchByFingerprint(
+                    request.getGameId(), request.getFingerprint(), normalizedFingerprintMatchMinutes());
+            if (clickId != null) {
+                var clickOpt = clickRecordRepo.findById(clickId);
+                if (clickOpt.isPresent()) {
+                    var click = clickOpt.get();
+                    var cc = new ClickCache(
+                            click.getCallback(), click.getCampaignId(),
+                            click.getAdgroupId(), click.getContentId(),
+                            click.getClickTime(), click.getPlatform(),
+                            click.getActionType(), click.getTrackingEnabled()
+                    );
+                    matchResult = new OaidMatcher.MatchResult(cc, "fingerprint", click.getId());
+                    attributionType = "fingerprint";
                 }
             }
         }
@@ -174,6 +172,8 @@ public class AttributionEngine {
         record.setPlatform(request.getPlatform());
         record.setAppVersion(request.getApp() != null ? request.getApp().getVersion() : null);
         record.setConversionTime(System.currentTimeMillis() / 1000);
+        record.setDebugMode(request.isDebugMode());
+        record.setReattribution(isReattribution);
 
         if (request.getEventParams() != null && !request.getEventParams().isEmpty()) {
             try {

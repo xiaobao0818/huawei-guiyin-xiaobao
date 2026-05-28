@@ -23,4 +23,14 @@ public interface EventTaskRepository extends JpaRepository<EventTask, Long> {
                   @Param("toStatus") String toStatus, @Param("now") LocalDateTime now);
 
     List<EventTask> findByStatusOrderByCreatedAtAsc(String status);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE EventTask t SET t.status = 'pending', t.updatedAt = :now WHERE t.status = 'processing' AND t.updatedAt < :cutoff")
+    int resetStaleProcessingTasks(@Param("cutoff") LocalDateTime cutoff, @Param("now") LocalDateTime now);
+
+    @Transactional
+    @Modifying
+    @Query("DELETE FROM EventTask t WHERE t.status = 'done' AND t.createdAt < :cutoff")
+    int deleteDoneBefore(@Param("cutoff") LocalDateTime cutoff);
 }

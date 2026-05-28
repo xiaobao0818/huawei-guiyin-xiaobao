@@ -20,3 +20,5 @@ ALTER TABLE game_config
 ALTER TABLE attribution_record
     ADD COLUMN debug_mode TINYINT DEFAULT 0 COMMENT '是否调试模式' AFTER callback_response,
     ADD COLUMN reattribution TINYINT DEFAULT 0 COMMENT '是否再归因' AFTER debug_mode;
+
+CREATE INDEX idx_attr_game_event_status_time ON attribution_record (game_id, event_type, callback_status, created_at);

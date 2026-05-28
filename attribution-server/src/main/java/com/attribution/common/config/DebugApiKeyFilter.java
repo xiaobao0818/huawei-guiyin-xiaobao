@@ -9,6 +9,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 @Component
 public class DebugApiKeyFilter extends OncePerRequestFilter {
@@ -23,10 +25,19 @@ public class DebugApiKeyFilter extends OncePerRequestFilter {
                                      FilterChain filterChain) throws ServletException, IOException {
         if (debugApiKey != null && !debugApiKey.isEmpty()) {
             String debugKey = request.getHeader(DEBUG_KEY_HEADER);
-            if (debugApiKey.equals(debugKey)) {
+            if (matches(debugKey)) {
                 request.setAttribute("debug_mode", true);
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    private boolean matches(String providedKey) {
+        if (providedKey == null || providedKey.isBlank() || debugApiKey == null || debugApiKey.isBlank()) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                debugApiKey.getBytes(StandardCharsets.UTF_8),
+                providedKey.getBytes(StandardCharsets.UTF_8));
     }
 }

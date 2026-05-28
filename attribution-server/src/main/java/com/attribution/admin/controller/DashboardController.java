@@ -77,8 +77,11 @@ public class DashboardController {
     }
 
     @GetMapping("/event-tasks")
-    public R<List<EventTask>> eventTasks(@RequestParam(defaultValue = "failed") String status) {
-        return R.ok(eventTaskRepo.findByStatusOrderByCreatedAtAsc(status));
+    public R<List<EventTask>> eventTasks(@RequestParam(defaultValue = "failed") String status,
+                                         @RequestParam(defaultValue = "50") int limit) {
+        int safeLimit = Math.min(Math.max(limit, 1), 100);
+        return R.ok(eventTaskRepo.findTop50ByStatusOrderByCreatedAtAsc(status).stream()
+                .limit(safeLimit).toList());
     }
 
     @PostMapping("/event-tasks/{id}/replay")

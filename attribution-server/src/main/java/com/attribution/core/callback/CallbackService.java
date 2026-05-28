@@ -3,7 +3,6 @@ package com.attribution.core.callback;
 import com.attribution.common.entity.CallbackLog;
 import com.attribution.common.entity.GameConfig;
 import com.attribution.common.enums.CallbackStatus;
-import com.attribution.common.repository.CallbackLogRepository;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.util.AesUtil;
 import com.attribution.common.util.SignatureUtil;
@@ -114,7 +113,7 @@ public class CallbackService {
             cbLog.setResultCode(parseResultCode(responseBody));
             cbLog.setDurationMs(duration);
             try {
-                callbackLogRepo.save(cbLog);
+                logWriter.enqueue(cbLog);
             } catch (Exception saveError) {
                 log.error("保存回传日志失败", saveError);
             }
