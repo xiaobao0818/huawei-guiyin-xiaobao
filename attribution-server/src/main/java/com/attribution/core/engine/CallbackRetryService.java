@@ -2,6 +2,7 @@ package com.attribution.core.engine;
 
 import com.attribution.common.entity.CallbackTask;
 import com.attribution.common.entity.GameConfig;
+import com.attribution.common.enums.CallbackStatus;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.CallbackTaskRepository;
 import com.attribution.common.repository.GameConfigRepository;
@@ -26,13 +27,6 @@ import java.util.UUID;
 public class CallbackRetryService {
 
     private static final Logger log = LoggerFactory.getLogger(CallbackRetryService.class);
-
-    private static final String STATUS_PENDING = "pending";
-    private static final String STATUS_SENDING = "sending";
-    private static final String STATUS_RETRY_PENDING = "retry_pending";
-    private static final String STATUS_SUCCESS = "success";
-    private static final String STATUS_DEAD = "dead";
-    private static final List<String> DUE_STATUSES = List.of(STATUS_PENDING, STATUS_RETRY_PENDING);
 
     private static final String WORKER_LOCK_KEY = "attribution:lock:callback-worker";
     private static final String RECOVERY_LOCK_KEY = "attribution:lock:stale-recovery";
@@ -73,7 +67,7 @@ public class CallbackRetryService {
             CallbackTask task = new CallbackTask();
             task.setAttributionId(ctx.getAttributionRecordId());
             task.setGameId(ctx.getGameId());
-            task.setStatus(STATUS_PENDING);
+            task.setStatus(CallbackStatus.PENDING.getCode());
             task.setContextJson(objectMapper.writeValueAsString(ctx));
             task.setAttemptCount(0);
             int retryMax = gameConfig.getCallbackRetryMax() != null ? Math.max(0, gameConfig.getCallbackRetryMax()) : 3;
@@ -82,7 +76,7 @@ public class CallbackRetryService {
             callbackTaskRepo.save(task);
         } catch (JsonProcessingException e) {
             log.error("创建回传任务失败: attributionId={}", ctx.getAttributionRecordId(), e);
-            updateRecordStatus(ctx.getAttributionRecordId(), "failed", "创建回传任务失败: " + e.getMessage());
+            updateRecordStatus(ctx.getAttributionRecordId(), CallbackStatus.FAILED.getCode(), "创建回传任务失败: " + e.getMessage());
         }
     }
 
@@ -102,9 +96,9 @@ public class CallbackRetryService {
 
             List<CallbackTask> dueTasks = callbackTaskRepo
                     .findTop50ByStatusInAndNextRetryAtLessThanEqualOrderByNextRetryAtAsc(
-                            DUE_STATUSES, LocalDateTime.now());
+                            CallbackStatus.DUE_STATUSES, LocalDateTime.now());
             for (CallbackTask task : dueTasks) {
-                if (callbackTaskRepo.claimTask(task.getId(), DUE_STATUSES, LocalDateTime.now()) == 1) {
+                if (callbackTaskRepo.claimTask(task.getId(), CallbackStatus.DUE_STATUSES, LocalDateTime.now()) == 1) {
                     processClaimedTask(task.getId());
                 }
             }
@@ -115,7 +109,7 @@ public class CallbackRetryService {
 
     private void processClaimedTask(Long taskId) {
         CallbackTask task = callbackTaskRepo.findById(taskId).orElse(null);
-        if (task == null || !STATUS_SENDING.equals(task.getStatus())) {
+        if (task == null || !CallbackStatus.SENDING.getCode().equals(task.getStatus())) {
             return;
         }
 
@@ -139,11 +133,11 @@ public class CallbackRetryService {
         CallbackService.CallbackResult result = callbackService.sendAttribution(ctx, gameConfig);
         if (result.isSuccess()) {
             metrics.recordCallbackSuccess(task.getGameId());
-            task.setStatus(STATUS_SUCCESS);
+            task.setStatus(CallbackStatus.SUCCESS.getCode());
             task.setLastError(null);
             task.setNextRetryAt(LocalDateTime.now());
             callbackTaskRepo.save(task);
-            updateRecordRetryCount(task.getAttributionId(), Math.max(0, attemptCount - 1), "success", result.getResponseBody());
+            updateRecordRetryCount(task.getAttributionId(), Math.max(0, attemptCount - 1), CallbackStatus.SUCCESS.getCode(), result.getResponseBody());
             return;
         }
 
@@ -151,16 +145,16 @@ public class CallbackRetryService {
         task.setLastError(error);
         if (attemptCount < task.getMaxAttempts()) {
             metrics.recordCallbackRetry(task.getGameId(), attemptCount);
-            task.setStatus(STATUS_RETRY_PENDING);
+            task.setStatus(CallbackStatus.RETRY_PENDING.getCode());
             task.setNextRetryAt(LocalDateTime.now().plusSeconds(delaySeconds(attemptCount)));
             callbackTaskRepo.save(task);
-            updateRecordRetryCount(task.getAttributionId(), Math.max(0, attemptCount - 1), "pending", error);
+            updateRecordRetryCount(task.getAttributionId(), Math.max(0, attemptCount - 1), CallbackStatus.PENDING.getCode(), error);
         } else {
             metrics.recordCallbackFailure(task.getGameId());
-            task.setStatus(STATUS_DEAD);
+            task.setStatus(CallbackStatus.DEAD.getCode());
             task.setNextRetryAt(LocalDateTime.now());
             callbackTaskRepo.save(task);
-            updateRecordRetryCount(task.getAttributionId(), Math.max(0, attemptCount - 1), "failed", "重试耗尽: " + error);
+            updateRecordRetryCount(task.getAttributionId(), Math.max(0, attemptCount - 1), CallbackStatus.FAILED.getCode(), "重试耗尽: " + error);
         }
     }
 
@@ -205,11 +199,11 @@ public class CallbackRetryService {
     }
 
     private void failPermanently(CallbackTask task, String error) {
-        task.setStatus(STATUS_DEAD);
+        task.setStatus(CallbackStatus.DEAD.getCode());
         task.setLastError(error);
         task.setNextRetryAt(LocalDateTime.now());
         callbackTaskRepo.save(task);
-        updateRecordStatus(task.getAttributionId(), "failed", error);
+        updateRecordStatus(task.getAttributionId(), CallbackStatus.FAILED.getCode(), error);
     }
 
     private void updateRecordStatus(Long id, String status, String response) {

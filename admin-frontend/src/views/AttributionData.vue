@@ -91,12 +91,13 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { queryAttributions } from '../api/attribution'
+import type { AttributionRecord, AttributionQuery } from '../api/types'
 
-const records = ref<any[]>([])
+const records = ref<AttributionRecord[]>([])
 const total = ref(0)
 const loading = ref(false)
 
-const query = reactive({
+const query = reactive<AttributionQuery>({
   gameId: '',
   oaid: '',
   eventType: '',
@@ -108,7 +109,7 @@ const query = reactive({
 async function search() {
   loading.value = true
   try {
-    const res: any = await queryAttributions({ ...query })
+    const res = await queryAttributions({ ...query })
     if (res.data) {
       records.value = res.data.content || []
       total.value = res.data.totalElements || 0

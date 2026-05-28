@@ -6,6 +6,7 @@ import com.attribution.common.repository.GameConfigRepository;
 import com.attribution.common.util.AesUtil;
 import com.attribution.core.event.EventRouter;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -13,15 +14,20 @@ import java.util.List;
 @Service
 public class GameService {
 
+    private static final String DASHBOARD_CACHE_KEY = "attribution:dashboard:cache";
+
     @Value("${attribution.encryption-key}")
     private String encryptionKey;
 
     private final GameConfigRepository gameConfigRepo;
     private final EventRouter eventRouter;
+    private final StringRedisTemplate stringRedisTemplate;
 
-    public GameService(GameConfigRepository gameConfigRepo, EventRouter eventRouter) {
+    public GameService(GameConfigRepository gameConfigRepo, EventRouter eventRouter,
+                      StringRedisTemplate stringRedisTemplate) {
         this.gameConfigRepo = gameConfigRepo;
         this.eventRouter = eventRouter;
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     public List<GameConfig> listAll() {
@@ -67,7 +73,9 @@ public class GameService {
         config.setCallbackRetryMax(dto.getCallbackRetryMax());
         config.setFingerprintFallback(dto.getFingerprintFallback());
         config.setStatus(dto.getStatus());
-        return maskSecret(gameConfigRepo.save(config));
+        GameConfig saved = gameConfigRepo.save(config);
+        stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
+        return maskSecret(saved);
     }
 
     public GameConfig update(Long id, GameConfigDTO dto) {
@@ -82,7 +90,9 @@ public class GameService {
         config.setCallbackRetryMax(dto.getCallbackRetryMax());
         config.setFingerprintFallback(dto.getFingerprintFallback());
         config.setStatus(dto.getStatus());
-        return maskSecret(gameConfigRepo.save(config));
+        GameConfig saved = gameConfigRepo.save(config);
+        stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
+        return maskSecret(saved);
     }
 
     public void delete(Long id) {
@@ -90,6 +100,7 @@ public class GameService {
         if (config != null) {
             eventRouter.clearGame(config.getGameId());
             gameConfigRepo.deleteById(id);
+            stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
         }
     }
 

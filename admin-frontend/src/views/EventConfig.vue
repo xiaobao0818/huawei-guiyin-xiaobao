@@ -87,22 +87,23 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { listGames, listEvents, createEvent, updateEvent, deleteEvent } from '../api/attribution'
-import { ElMessage } from 'element-plus'
+import type { GameConfig, EventDefinition, EventConfigForm } from '../api/types'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
-const games = ref<any[]>([])
-const events = ref<any[]>([])
+const games = ref<GameConfig[]>([])
+const events = ref<EventDefinition[]>([])
 const selectedGame = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
-const editing = ref<any>(null)
+const editing = ref<EventDefinition | null>(null)
 
-const defaultForm = { eventName: '', displayName: '', conversionType: '', paramSchema: '', enabled: true }
-const form = ref({ ...defaultForm })
+const defaultForm: EventConfigForm = { eventName: '', displayName: '', conversionType: '', paramSchema: '', enabled: true }
+const form = ref<EventConfigForm>({ ...defaultForm })
 
 onMounted(async () => {
   try {
-    const res: any = await listGames()
+    const res = await listGames()
     games.value = res.data || []
   } catch { /* */ }
 })
@@ -111,15 +112,21 @@ async function loadEvents() {
   if (!selectedGame.value) return
   loading.value = true
   try {
-    const res: any = await listEvents(selectedGame.value)
+    const res = await listEvents(selectedGame.value)
     events.value = res.data || []
   } finally { loading.value = false }
 }
 
-function openDialog(row?: any) {
+function openDialog(row?: EventDefinition) {
   if (row) {
     editing.value = row
-    form.value = { ...row }
+    form.value = {
+      eventName: row.eventName,
+      displayName: row.displayName,
+      conversionType: row.conversionType || '',
+      paramSchema: row.paramSchema || '',
+      enabled: row.enabled,
+    }
   } else {
     editing.value = null
     form.value = { ...defaultForm }
@@ -145,13 +152,14 @@ async function handleSave() {
   } finally { saving.value = false }
 }
 
-async function handleDelete(row: any) {
+async function handleDelete(row: EventDefinition) {
   try {
+    await ElMessageBox.confirm(`确定删除事件 "${row.displayName || row.eventName}"?`, '确认删除', { type: 'warning' })
     await deleteEvent(row.id)
     ElMessage.success('已删除')
     await loadEvents()
   } catch (e: any) {
-    ElMessage.error(e?.message || '删除失败')
+    if (e !== 'cancel') ElMessage.error(e?.message || '删除失败')
   }
 }
 </script>

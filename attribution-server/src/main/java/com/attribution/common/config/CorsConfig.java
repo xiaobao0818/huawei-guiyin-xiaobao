@@ -20,7 +20,12 @@ public class CorsConfig {
                 "https://*.hicloud.com"
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("*"));
+        config.setAllowedHeaders(List.of(
+                "Authorization",
+                "Content-Type",
+                "X-Attribution-Api-Key",
+                "X-Requested-With"
+        ));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

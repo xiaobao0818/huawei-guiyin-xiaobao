@@ -10,6 +10,12 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -22,6 +28,12 @@ services:
     restart: unless-stopped
     ports:
       - "3306:3306"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
       MYSQL_DATABASE: attribution
@@ -44,6 +56,12 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     environment:
       SPRING_PROFILES_ACTIVE: prod
       REDIS_HOST: redis
@@ -72,6 +90,12 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
     depends_on:
       - attribution-server
 

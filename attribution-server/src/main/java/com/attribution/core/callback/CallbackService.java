@@ -2,6 +2,7 @@ package com.attribution.core.callback;
 
 import com.attribution.common.entity.CallbackLog;
 import com.attribution.common.entity.GameConfig;
+import com.attribution.common.enums.CallbackStatus;
 import com.attribution.common.repository.CallbackLogRepository;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.util.AesUtil;
@@ -89,14 +90,14 @@ public class CallbackService {
                 log.info("回传成功: game={}, event={}, resultCode={}, duration={}ms",
                         ctx.getGameId(), ctx.getEventType(), cbLog.getResultCode(), duration);
                 ctx.markSuccess(response.getBody());
-                updateRecordStatus(ctx.getAttributionRecordId(), "success", response.getBody());
+                updateRecordStatus(ctx.getAttributionRecordId(), CallbackStatus.SUCCESS.getCode(), response.getBody());
                 return CallbackResult.success(response.getStatusCode().value(), cbLog.getResultCode(), response.getBody());
             } else {
                 log.warn("回传失败: game={}, event={}, httpCode={}, resultCode={}, body={}",
                         ctx.getGameId(), ctx.getEventType(), response.getStatusCode(),
                         cbLog.getResultCode(), response.getBody());
                 ctx.markFailed(response.getBody());
-                updateRecordStatus(ctx.getAttributionRecordId(), "failed", response.getBody());
+                updateRecordStatus(ctx.getAttributionRecordId(), CallbackStatus.FAILED.getCode(), response.getBody());
                 return CallbackResult.failure(response.getStatusCode().value(), cbLog.getResultCode(), response.getBody());
             }
 
@@ -120,12 +121,12 @@ public class CallbackService {
             log.warn("回传失败: game={}, event={}, httpCode={}, resultCode={}, body={}",
                     ctx.getGameId(), ctx.getEventType(), e.getStatusCode(), cbLog.getResultCode(), responseBody);
             ctx.markFailed(responseBody);
-            updateRecordStatus(ctx.getAttributionRecordId(), "failed", responseBody);
+            updateRecordStatus(ctx.getAttributionRecordId(), CallbackStatus.FAILED.getCode(), responseBody);
             return CallbackResult.failure(e.getStatusCode().value(), cbLog.getResultCode(), responseBody);
         } catch (Exception e) {
             log.error("回传异常: game={}, event={}, error={}", ctx.getGameId(), ctx.getEventType(), e.getMessage());
             ctx.markFailed(e.getMessage());
-            updateRecordStatus(ctx.getAttributionRecordId(), "failed", e.getMessage());
+            updateRecordStatus(ctx.getAttributionRecordId(), CallbackStatus.FAILED.getCode(), e.getMessage());
             return CallbackResult.failure(null, null, e.getMessage());
         }
     }

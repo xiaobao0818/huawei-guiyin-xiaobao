@@ -2,6 +2,7 @@ package com.attribution.core.engine;
 
 import com.attribution.common.constant.EventConstants;
 import com.attribution.common.entity.*;
+import com.attribution.common.enums.CallbackStatus;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.ClickRecordRepository;
 import com.attribution.common.repository.GameConfigRepository;
@@ -208,15 +209,15 @@ public class AttributionEngine {
                 }
             }
 
-            record.setCallbackStatus("pending");
+            record.setCallbackStatus(CallbackStatus.PENDING.getCode());
         } else {
             record.setAttributionType(
                     attributionType != null ? attributionType :
                     (needCallback ? "unmatched" : "no_callback"));
             if (needCallback) {
-                record.setCallbackStatus("unmatched");
+                record.setCallbackStatus(CallbackStatus.UNMATCHED.getCode());
             } else {
-                record.setCallbackStatus("no_callback");
+                record.setCallbackStatus(CallbackStatus.NO_CALLBACK.getCode());
             }
         }
 

@@ -2,6 +2,7 @@ package com.attribution.admin.service;
 
 import com.attribution.admin.dto.DashboardDTO;
 import com.attribution.common.constant.EventConstants;
+import com.attribution.common.enums.CallbackStatus;
 import com.attribution.common.entity.AttributionRecord;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.ClickRecordRepository;
@@ -25,13 +26,13 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class AnalyticsService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalyticsService.class);
 
-    private static final List<String> CALLBACK_ATTEMPT_STATUSES = List.of("pending", "success", "failed");
     private static final String DASHBOARD_CACHE_KEY = "attribution:dashboard:cache";
     private static final long DASHBOARD_CACHE_TTL_SECONDS = 300; // 5 minutes
 
@@ -92,8 +93,8 @@ public class AnalyticsService {
         dto.setTodayRevenue(revenue != null ? revenue : 0.0);
         dto.setTotalGames(gameConfigRepo.count());
 
-        long totalCallbacks = attributionRepo.countCallbackAttemptsByDate(CALLBACK_ATTEMPT_STATUSES, todayStart, todayEnd);
-        long successCallbacks = attributionRepo.countCallbackAttemptsByDate(List.of("success"), todayStart, todayEnd);
+        long totalCallbacks = attributionRepo.countCallbackAttemptsByDate(CallbackStatus.ATTEMPT_STATUSES, todayStart, todayEnd);
+        long successCallbacks = attributionRepo.countCallbackAttemptsByDate(Set.of(CallbackStatus.SUCCESS.getCode()), todayStart, todayEnd);
         dto.setCallbackSuccessRate(totalCallbacks > 0 ? (double) successCallbacks / totalCallbacks : 0.0);
         return dto;
     }

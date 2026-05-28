@@ -29,6 +29,17 @@ admin:
   username: ${ADMIN_USERNAME:admin}
   password: ${ADMIN_PASSWORD:admin123}
 
-# Note: the default encryption-key fallback is exactly 32 hex chars (valid 128-bit key).
-# In production, always set ENCRYPTION_KEY via environment variable.
-# This fallback exists only so that ./mvnw spring-boot:run works out of the box for local development.
+# ============================================================
+# SECURITY WARNING — 开发环境默认凭证
+# ============================================================
+# 以上 fallback 值仅用于本地开发开箱即用。
+# 切勿在以下场景使用默认值:
+#   - 生产/预发布环境 (由 prod profile 强制从环境变量读取)
+#   - 存储真实用户数据的开发/测试环境
+#   - 任何对外暴露的服务
+#
+# 覆盖方式:
+#   export ENCRYPTION_KEY=$(openssl rand -hex 16)
+#   export ATTRIBUTION_API_KEY=<your-secure-random-key>
+#   export ADMIN_PASSWORD=<your-strong-password>
+# ============================================================

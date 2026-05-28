@@ -27,8 +27,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { getDashboard } from '../api/attribution'
+import type { DashboardData } from '../api/types'
 
-const dashboard = ref<any>(null)
+const dashboard = ref<DashboardData | null>(null)
 
 const cards = computed(() => [
   { label: '今日点击', value: dashboard.value?.todayClicks || 0, color: '#409EFF' },
@@ -41,7 +42,7 @@ const cards = computed(() => [
 
 onMounted(async () => {
   try {
-    const res: any = await getDashboard()
+    const res = await getDashboard()
     dashboard.value = res.data
   } catch (e) {
     console.error('获取面板数据失败', e)

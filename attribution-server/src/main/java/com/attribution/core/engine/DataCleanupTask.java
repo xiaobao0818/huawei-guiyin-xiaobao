@@ -1,5 +1,6 @@
 package com.attribution.core.engine;
 
+import com.attribution.common.enums.CallbackStatus;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.CallbackTaskRepository;
 import com.attribution.common.repository.ClickRecordRepository;
@@ -11,7 +12,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 /**
  * Periodic data cleanup to prevent unbounded table growth.
@@ -33,9 +33,6 @@ public class DataCleanupTask {
     private static final int ATTRIBUTION_RETENTION_DAYS = 180;
     private static final int TASK_RETENTION_DAYS = 90;
     private static final int LOG_RETENTION_DAYS = 90;
-
-    /** Final task states that are safe to delete. */
-    private static final List<String> COMPLETED_TASK_STATUSES = List.of("success", "dead");
 
     private final ClickRecordRepository clickRepo;
     private final AttributionRecordRepository attributionRepo;
@@ -66,7 +63,7 @@ public class DataCleanupTask {
 
         int deletedClicks = clickRepo.deleteByCreatedAtBefore(clickCutoff);
         int deletedAttrs = attributionRepo.deleteByCreatedAtBefore(attrCutoff);
-        int deletedTasks = callbackTaskRepo.deleteCompletedBefore(taskCutoff, COMPLETED_TASK_STATUSES);
+        int deletedTasks = callbackTaskRepo.deleteCompletedBefore(taskCutoff, CallbackStatus.TERMINAL_STATUSES);
         int deletedLogs = callbackLogRepo.deleteByCreatedAtBefore(logCutoff);
 
         log.info("定时清理完成: 点击{}条, 归因{}条, 回传任务{}条, 回传日志{}条",

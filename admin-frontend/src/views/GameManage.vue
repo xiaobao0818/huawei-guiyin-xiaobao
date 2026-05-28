@@ -70,35 +70,45 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { listGames, createGame, updateGame, deleteGame } from '../api/attribution'
+import type { GameConfig, GameConfigForm } from '../api/types'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-const games = ref<any[]>([])
+const games = ref<GameConfig[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
-const editing = ref<any>(null)
+const editing = ref<GameConfig | null>(null)
 
-const defaultForm = {
+const defaultForm: GameConfigForm = {
   gameId: '', gameName: '', platforms: 'apk,hap,rpk',
   secretKey: '', attributionWindowDays: 30, callbackRetryMax: 3,
   fingerprintFallback: true, status: true
 }
-const form = ref({ ...defaultForm })
+const form = ref<GameConfigForm>({ ...defaultForm })
 
 async function loadGames() {
   loading.value = true
   try {
-    const res: any = await listGames()
+    const res = await listGames()
     games.value = res.data || []
   } finally {
     loading.value = false
   }
 }
 
-function openDialog(row?: any) {
+function openDialog(row?: GameConfig) {
   if (row) {
     editing.value = row
-    form.value = { ...row, secretKey: '****' }
+    form.value = {
+      gameId: row.gameId,
+      gameName: row.gameName,
+      platforms: row.platforms,
+      secretKey: '****',
+      attributionWindowDays: row.attributionWindowDays,
+      callbackRetryMax: row.callbackRetryMax,
+      fingerprintFallback: row.fingerprintFallback,
+      status: row.status,
+    }
   } else {
     editing.value = null
     form.value = { ...defaultForm }
@@ -123,7 +133,7 @@ async function handleSave() {
   } finally { saving.value = false }
 }
 
-async function handleDelete(row: any) {
+async function handleDelete(row: GameConfig) {
   try {
     await ElMessageBox.confirm(`确定删除游戏 "${row.gameName}"?`, '确认', { type: 'warning' })
     await deleteGame(row.id)

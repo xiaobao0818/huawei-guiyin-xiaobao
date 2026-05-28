@@ -4,6 +4,7 @@ import com.attribution.admin.dto.EventConfigDTO;
 import com.attribution.common.entity.EventDefinition;
 import com.attribution.common.repository.EventDefinitionRepository;
 import com.attribution.core.event.EventRouter;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -11,12 +12,17 @@ import java.util.List;
 @Service
 public class EventConfigService {
 
+    private static final String DASHBOARD_CACHE_KEY = "attribution:dashboard:cache";
+
     private final EventDefinitionRepository eventDefRepo;
     private final EventRouter eventRouter;
+    private final StringRedisTemplate stringRedisTemplate;
 
-    public EventConfigService(EventDefinitionRepository eventDefRepo, EventRouter eventRouter) {
+    public EventConfigService(EventDefinitionRepository eventDefRepo, EventRouter eventRouter,
+                             StringRedisTemplate stringRedisTemplate) {
         this.eventDefRepo = eventDefRepo;
         this.eventRouter = eventRouter;
+        this.stringRedisTemplate = stringRedisTemplate;
     }
 
     public List<EventDefinition> listByGame(String gameId) {
@@ -39,7 +45,9 @@ public class EventConfigService {
         def.setParamSchema(dto.getParamSchema());
         def.setEnabled(dto.getEnabled());
         def.setIsPreset(false);
-        return eventDefRepo.save(def);
+        EventDefinition saved = eventDefRepo.save(def);
+        stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
+        return saved;
     }
 
     public EventDefinition update(Long id, EventConfigDTO dto) {
@@ -51,6 +59,7 @@ public class EventConfigService {
         def.setEnabled(dto.getEnabled());
         EventDefinition saved = eventDefRepo.save(def);
         eventRouter.clearCache(def.getGameId(), def.getEventName());
+        stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
         return saved;
     }
 
@@ -64,6 +73,7 @@ public class EventConfigService {
             String eventName = def.getEventName();
             eventDefRepo.deleteById(id);
             eventRouter.clearCache(gameId, eventName);
+            stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
         }
     }
 }
