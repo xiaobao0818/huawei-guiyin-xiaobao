@@ -49,6 +49,8 @@ public class DataCleanupTask {
         this.callbackLogRepo = callbackLogRepo;
     }
 
+    private static final int BATCH_SIZE = 1000;
+
     @Scheduled(cron = "0 0 3 * * ?")
     @Transactional
     public void cleanOldData() {
@@ -61,12 +63,23 @@ public class DataCleanupTask {
                 clickCutoff.toLocalDate(), attrCutoff.toLocalDate(),
                 taskCutoff.toLocalDate(), logCutoff.toLocalDate());
 
-        int deletedClicks = clickRepo.deleteByCreatedAtBefore(clickCutoff);
-        int deletedAttrs = attributionRepo.deleteByCreatedAtBefore(attrCutoff);
-        int deletedTasks = callbackTaskRepo.deleteCompletedBefore(taskCutoff, CallbackStatus.TERMINAL_STATUSES);
-        int deletedLogs = callbackLogRepo.deleteByCreatedAtBefore(logCutoff);
+        int deletedClicks = deleteInBatches(() -> clickRepo.deleteByCreatedAtBefore(clickCutoff, BATCH_SIZE));
+        int deletedAttrs = deleteInBatches(() -> attributionRepo.deleteByCreatedAtBefore(attrCutoff, BATCH_SIZE));
+        int deletedTasks = deleteInBatches(() -> callbackTaskRepo.deleteCompletedBefore(taskCutoff,
+                CallbackStatus.TERMINAL_STATUSES, BATCH_SIZE));
+        int deletedLogs = deleteInBatches(() -> callbackLogRepo.deleteByCreatedAtBefore(logCutoff, BATCH_SIZE));
 
         log.info("定时清理完成: 点击{}条, 归因{}条, 回传任务{}条, 回传日志{}条",
                 deletedClicks, deletedAttrs, deletedTasks, deletedLogs);
+    }
+
+    private int deleteInBatches(java.util.function.IntSupplier deleteOp) {
+        int total = 0;
+        while (true) {
+            int deleted = deleteOp.getAsInt();
+            if (deleted == 0) break;
+            total += deleted;
+        }
+        return total;
     }
 }

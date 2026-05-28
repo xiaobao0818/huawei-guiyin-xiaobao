@@ -54,6 +54,7 @@ public class GameService {
         copy.setAttributionWindowDays(g.getAttributionWindowDays());
         copy.setCallbackRetryMax(g.getCallbackRetryMax());
         copy.setFingerprintFallback(g.getFingerprintFallback());
+        copy.setWindowConfig(g.getWindowConfig());
         copy.setStatus(g.getStatus());
         copy.setCreatedAt(g.getCreatedAt());
         copy.setUpdatedAt(g.getUpdatedAt());

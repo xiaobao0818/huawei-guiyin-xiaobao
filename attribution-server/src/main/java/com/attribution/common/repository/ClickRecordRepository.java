@@ -19,6 +19,11 @@ public interface ClickRecordRepository extends JpaRepository<ClickRecord, Long> 
     @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since ORDER BY c.clickTime DESC")
     List<ClickRecord> findUnmatchedByGameAndTime(@Param("gameId") String gameId, @Param("since") Long since);
 
+    @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since ORDER BY c.clickTime DESC")
+    List<ClickRecord> findUnmatchedByGameAndTime(@Param("gameId") String gameId,
+                                                   @Param("since") Long since,
+                                                   org.springframework.data.domain.Pageable pageable);
+
     @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since AND c.ip LIKE CONCAT(:ipPrefix, '.%') ORDER BY c.clickTime DESC")
     List<ClickRecord> findUnmatchedByGameTimeAndIpPrefix(@Param("gameId") String gameId,
                                                           @Param("since") Long since,
@@ -29,6 +34,9 @@ public interface ClickRecordRepository extends JpaRepository<ClickRecord, Long> 
     long countByCreatedAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
 
     @Modifying
-    @Query("DELETE FROM ClickRecord c WHERE c.createdAt < :cutoff")
-    int deleteByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff);
+    @Query(value = "DELETE FROM click_record WHERE created_at < :cutoff LIMIT :limit", nativeQuery = true)
+    int deleteByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff, @Param("limit") int limit);
+
+    @Query(value = "SELECT COUNT(*) FROM click_record WHERE created_at < :cutoff", nativeQuery = true)
+    long countByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff);
 }

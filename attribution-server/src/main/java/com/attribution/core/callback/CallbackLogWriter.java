@@ -2,6 +2,7 @@ package com.attribution.core.callback;
 
 import com.attribution.common.entity.CallbackLog;
 import com.attribution.common.repository.CallbackLogRepository;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -41,6 +42,21 @@ public class CallbackLogWriter {
                 callbackLogRepo.saveAll(batch);
             } catch (Exception e) {
                 log.error("批量写入回传日志失败: count={}", batch.size(), e);
+            }
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        log.info("CallbackLogWriter 关闭中, 剩余缓冲: {}", buffer.size());
+        flush();
+        List<CallbackLog> remaining = new ArrayList<>();
+        buffer.drainTo(remaining);
+        if (!remaining.isEmpty()) {
+            try {
+                callbackLogRepo.saveAll(remaining);
+            } catch (Exception e) {
+                log.error("CallbackLogWriter 关闭时写入失败: count={}", remaining.size(), e);
             }
         }
     }

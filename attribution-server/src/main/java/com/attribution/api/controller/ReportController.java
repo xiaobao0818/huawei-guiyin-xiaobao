@@ -4,6 +4,7 @@ import com.attribution.api.model.ReportRequest;
 import com.attribution.api.model.ReportResponse;
 import com.attribution.common.dto.R;
 import com.attribution.core.engine.AttributionEngine;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +23,8 @@ public class ReportController {
     }
 
     @PostMapping("/report")
-    public R<ReportResponse> report(@Valid @RequestBody ReportRequest request) {
+    public R<ReportResponse> report(@Valid @RequestBody ReportRequest request,
+                                     HttpServletRequest httpRequest) {
         log.info("收到上报: game={}, platform={}, event={}, oaid={}",
                 request.getGameId(), request.getPlatform(), request.getEvent(),
                 request.getDevice() != null ? request.getDevice().getOaid() : "null");
@@ -33,6 +35,7 @@ public class ReportController {
         engineReq.setEvent(request.getEvent());
         engineReq.setEventParams(request.getEventParams());
         engineReq.setFingerprint(request.getFingerprint());
+        engineReq.setDebugMode(Boolean.TRUE.equals(httpRequest.getAttribute("debug_mode")));
 
         if (request.getDevice() != null) {
             AttributionEngine.DeviceInfo di = new AttributionEngine.DeviceInfo();

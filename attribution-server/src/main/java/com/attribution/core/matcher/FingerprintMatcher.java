@@ -56,12 +56,10 @@ public class FingerprintMatcher {
         List<ClickRecord> candidates = clickRepo.findUnmatchedByGameTimeAndIpPrefix(
                 gameId, since, ipPrefix, PageRequest.of(0, MAX_CANDIDATES));
 
-        // 2. Fall back to full scan if no IP-prefix matches found
+        // 2. Fall back to DB-limited scan if no IP-prefix matches found
         if (candidates.isEmpty()) {
-            List<ClickRecord> fullList = clickRepo.findUnmatchedByGameAndTime(gameId, since);
-            candidates = fullList.size() > MAX_CANDIDATES
-                    ? fullList.subList(0, MAX_CANDIDATES)
-                    : fullList;
+            candidates = clickRepo.findUnmatchedByGameAndTime(gameId, since,
+                    PageRequest.of(0, MAX_CANDIDATES));
         }
 
         ClickRecord bestMatch = null;
@@ -90,9 +88,7 @@ public class FingerprintMatcher {
         }
 
         if (bestMatch != null && bestScore >= 2) {
-            String maskedIp = requestIp.length() > 8
-                    ? requestIp.substring(0, Math.min(requestIp.length(), 8)) + "***"
-                    : requestIp;
+            String maskedIp = maskIpForLog(requestIp);
             log.info("指纹匹配成功: game={}, score={}, ip={}", gameId, bestScore, maskedIp);
             return bestMatch.getId();
         }
@@ -106,5 +102,20 @@ public class FingerprintMatcher {
         if (ip == null || ip.isEmpty()) return "";
         int idx = ip.lastIndexOf('.');
         return idx > 0 ? ip.substring(0, idx) : ip;
+    }
+
+    private String maskIpForLog(String ip) {
+        if (ip == null || ip.isEmpty()) return "";
+        if (ip.contains(".")) {
+            // IPv4: mask the last octet
+            int idx = ip.lastIndexOf('.');
+            return idx > 0 ? ip.substring(0, idx) + ".***" : ip;
+        } else if (ip.contains(":")) {
+            // IPv6: mask the last hextet
+            int idx = ip.lastIndexOf(':');
+            return idx > 0 ? ip.substring(0, idx) + ":***" : ip;
+        }
+        // Unknown format — show only first 4 chars
+        return ip.length() > 4 ? ip.substring(0, 4) + "***" : ip;
     }
 }

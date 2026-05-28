@@ -56,7 +56,14 @@ public class RetentionCheckTask {
                 .findByGameIdAndEventTypeAndCallbackStatusAndCreatedAtAfter(
                         game.getGameId(), "activate", "success", since);
 
-        log.debug("留存检查: game={}, 近期激活={}", game.getGameId(), recentActivates.size());
+        // TODO: 实现留存回传逻辑:
+        // 1. 根据 game.windowConfig 中的 retain_days 配置 (如 [1, 3, 7])
+        //    计算今天需要检查留存的激活记录
+        // 2. 查询客户端是否上报了 retain_1d / retain_7d 事件
+        // 3. 如果客户端未上报(用户已流失), 查询 event_definition 中
+        //    conversion_type='retain' 的事件, 构造并发送回传通知华为用户流失
+        log.debug("留存检查: game={}, 近期激活={}, 沉默天数={}",
+                game.getGameId(), recentActivates.size(), silenceDays);
     }
 
     private Map<String, Object> parseWindowConfig(String json) {

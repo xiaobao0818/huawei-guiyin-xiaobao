@@ -79,10 +79,12 @@
     <div style="margin-top: 16px; display: flex; justify-content: flex-end">
       <el-pagination
         v-model:current-page="query.page"
-        :page-size="query.size"
+        v-model:page-size="query.size"
+        :page-sizes="[10, 20, 50, 100]"
         :total="total"
-        layout="total, prev, pager, next"
+        layout="total, sizes, prev, pager, next"
         @current-change="search"
+        @size-change="search"
       />
     </div>
   </div>

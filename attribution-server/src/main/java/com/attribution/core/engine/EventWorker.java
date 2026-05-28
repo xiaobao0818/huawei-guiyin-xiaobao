@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -24,14 +25,16 @@ public class EventWorker {
     private final EventTaskRepository eventTaskRepo;
     private final AttributionEngine attributionEngine;
     private final ObjectMapper objectMapper;
-    private final ExecutorService executor = Executors.newFixedThreadPool(8);
+    private final ExecutorService executor;
 
     public EventWorker(EventTaskRepository eventTaskRepo,
                       AttributionEngine attributionEngine,
-                      ObjectMapper objectMapper) {
+                      ObjectMapper objectMapper,
+                      @Value("${attribution.event-worker-threads:8}") int threadCount) {
         this.eventTaskRepo = eventTaskRepo;
         this.attributionEngine = attributionEngine;
         this.objectMapper = objectMapper;
+        this.executor = Executors.newFixedThreadPool(Math.max(1, threadCount));
     }
 
     @PreDestroy

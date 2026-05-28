@@ -158,7 +158,7 @@ public class AttributionEngine {
         AttributionRecord record = new AttributionRecord();
         record.setGameId(request.getGameId());
         record.setDedupeKey(dedupeKey);
-        String oaid = getOaid(request);
+        oaid = getOaid(request);
         // 指纹匹配无 OAID 时，用设备指纹哈希作为标识
         if ((oaid == null || oaid.isEmpty()) && request.getFingerprint() != null) {
             String ip = request.getFingerprint().getOrDefault("ip", "");

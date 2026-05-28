@@ -17,6 +17,6 @@ public interface CallbackLogRepository extends JpaRepository<CallbackLog, Long> 
     org.springframework.data.domain.Page<CallbackLog> findByGameIdPaged(@Param("gameId") String gameId, org.springframework.data.domain.Pageable pageable);
 
     @Modifying
-    @Query("DELETE FROM CallbackLog c WHERE c.createdAt < :cutoff")
-    int deleteByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff);
+    @Query(value = "DELETE FROM callback_log WHERE created_at < :cutoff LIMIT :limit", nativeQuery = true)
+    int deleteByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff, @Param("limit") int limit);
 }

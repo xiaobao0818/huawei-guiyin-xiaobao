@@ -57,8 +57,8 @@ public interface AttributionRecordRepository extends JpaRepository<AttributionRe
     long countByCreatedAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
 
     @Modifying
-    @Query("DELETE FROM AttributionRecord a WHERE a.createdAt < :cutoff")
-    int deleteByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff);
+    @Query(value = "DELETE FROM attribution_record WHERE created_at < :cutoff LIMIT :limit", nativeQuery = true)
+    int deleteByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff, @Param("limit") int limit);
 
     @Query("SELECT COUNT(a) FROM AttributionRecord a WHERE a.conversionType IS NOT NULL AND a.conversionType <> '' AND a.callbackStatus IN :statuses AND a.createdAt BETWEEN :start AND :end")
     long countCallbackAttemptsByDate(@Param("statuses") Collection<String> statuses,

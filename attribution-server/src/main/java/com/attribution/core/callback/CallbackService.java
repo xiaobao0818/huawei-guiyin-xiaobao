@@ -94,7 +94,7 @@ public class CallbackService {
             } else {
                 log.warn("回传失败: game={}, event={}, httpCode={}, resultCode={}, body={}",
                         ctx.getGameId(), ctx.getEventType(), response.getStatusCode(),
-                        cbLog.getResultCode(), response.getBody());
+                        cbLog.getResultCode(), truncate(response.getBody(), 500));
                 ctx.markFailed(response.getBody());
                 updateRecordStatus(ctx.getAttributionRecordId(), CallbackStatus.FAILED.getCode(), response.getBody());
                 return CallbackResult.failure(response.getStatusCode().value(), cbLog.getResultCode(), response.getBody());
@@ -118,7 +118,8 @@ public class CallbackService {
                 log.error("保存回传日志失败", saveError);
             }
             log.warn("回传失败: game={}, event={}, httpCode={}, resultCode={}, body={}",
-                    ctx.getGameId(), ctx.getEventType(), e.getStatusCode(), cbLog.getResultCode(), responseBody);
+                    ctx.getGameId(), ctx.getEventType(), e.getStatusCode(), cbLog.getResultCode(),
+                    truncate(responseBody, 500));
             ctx.markFailed(responseBody);
             updateRecordStatus(ctx.getAttributionRecordId(), CallbackStatus.FAILED.getCode(), responseBody);
             return CallbackResult.failure(e.getStatusCode().value(), cbLog.getResultCode(), responseBody);
@@ -182,6 +183,11 @@ public class CallbackService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String truncate(String s, int maxLen) {
+        if (s == null) return null;
+        return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...(truncated)";
     }
 
     public static class CallbackResult {

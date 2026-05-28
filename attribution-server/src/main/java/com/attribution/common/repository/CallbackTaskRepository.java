@@ -37,7 +37,8 @@ public interface CallbackTaskRepository extends JpaRepository<CallbackTask, Long
 
     @Transactional
     @Modifying
-    @Query("DELETE FROM CallbackTask t WHERE t.status IN :statuses AND t.createdAt < :cutoff")
+    @Query(value = "DELETE FROM callback_task WHERE status IN :statuses AND created_at < :cutoff LIMIT :limit", nativeQuery = true)
     int deleteCompletedBefore(@Param("cutoff") LocalDateTime cutoff,
-                               @Param("statuses") Collection<String> statuses);
+                               @Param("statuses") Collection<String> statuses,
+                               @Param("limit") int limit);
 }
