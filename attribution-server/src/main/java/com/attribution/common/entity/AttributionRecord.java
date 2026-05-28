@@ -41,7 +41,7 @@ public class AttributionRecord {
     @Column(name = "conversion_time")
     private Long conversionTime;
 
-    @Column(name = "revenue", precision = 12, scale = 2)
+    @Column(name = "revenue", columnDefinition = "DECIMAL(12,2)")
     private Double revenue = 0.0;
 
     @Column(name = "currency", length = 8)
