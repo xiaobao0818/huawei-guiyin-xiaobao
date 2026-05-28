@@ -6,7 +6,7 @@ public class RedisKeyUtil {
     private static final String ACTIVE_LOCK_PREFIX = "attribution:active:lock";
 
     public static String clickCacheKey(String gameId, String oaid) {
-        return CLICK_CACHE_PREFIX + ":" + gameId + ":" + oaid;
+        return deviceClickCacheKey(gameId, "oaid", oaid);
     }
 
     public static String deviceClickCacheKey(String gameId, String idType, String deviceId) {

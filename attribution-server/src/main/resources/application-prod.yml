@@ -31,6 +31,10 @@ logging:
 attribution:
   encryption-key: ${ENCRYPTION_KEY}
   api-key: ${ATTRIBUTION_API_KEY}
+  security:
+    swagger-public: false
+    h2-console-public: false
+    metrics-public: false
 
 admin:
   username: ${ADMIN_USERNAME:admin}

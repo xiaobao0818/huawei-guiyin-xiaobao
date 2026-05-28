@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
+import java.util.Optional;
 
 @Component
 public class OaidMatcher {
@@ -66,7 +67,7 @@ public class OaidMatcher {
 
         // 2. Fall back to MySQL
         long windowMs = (long) attributionWindowDays * 24 * 60 * 60 * 1000;
-        return clickRepo.findFirstByGameIdAndOaidAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId)
+        return findLatestUnmatchedClick(gameId, idType, deviceId)
                 .map(click -> {
                     long elapsedMs = System.currentTimeMillis() - click.getClickTime();
                     if (elapsedMs > windowMs) {
@@ -97,7 +98,17 @@ public class OaidMatcher {
                 click.getTrackingEnabled()
         );
         cc.setOaid(click.getOaid());
+        cc.setGaid(click.getGaid());
+        cc.setIdfa(click.getIdfa());
         return cc;
+    }
+
+    private Optional<ClickRecord> findLatestUnmatchedClick(String gameId, String idType, String deviceId) {
+        return switch (idType) {
+            case "gaid" -> clickRepo.findFirstByGameIdAndGaidAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId);
+            case "idfa" -> clickRepo.findFirstByGameIdAndIdfaAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId);
+            default -> clickRepo.findFirstByGameIdAndOaidAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId);
+        };
     }
 
     public static class MatchResult {

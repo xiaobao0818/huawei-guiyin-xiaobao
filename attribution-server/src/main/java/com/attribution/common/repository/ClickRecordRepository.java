@@ -14,6 +14,10 @@ public interface ClickRecordRepository extends JpaRepository<ClickRecord, Long> 
 
     Optional<ClickRecord> findFirstByGameIdAndOaidAndMatchedFalseOrderByClickTimeDesc(String gameId, String oaid);
 
+    Optional<ClickRecord> findFirstByGameIdAndGaidAndMatchedFalseOrderByClickTimeDesc(String gameId, String gaid);
+
+    Optional<ClickRecord> findFirstByGameIdAndIdfaAndMatchedFalseOrderByClickTimeDesc(String gameId, String idfa);
+
     long countByGameIdAndCreatedAtBetween(String gameId, java.time.LocalDateTime start, java.time.LocalDateTime end);
 
     @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since ORDER BY c.clickTime DESC")

@@ -36,20 +36,37 @@ public class CallbackRuleEvaluator {
         }
         try {
             CallbackRule rule = objectMapper.readValue(ruleJson, CallbackRule.class);
-            return evaluate(rule, request);
+            return evaluate(rule, request, false);
         } catch (JsonProcessingException e) {
             log.warn("回传规则解析失败, 降级为无条件回传: event={}", def.getEventName(), e);
             return true;
         }
     }
 
-    private boolean evaluate(CallbackRule rule, AttributionEngine.ReportRequest request) {
+    public boolean claimCallbackWindow(EventDefinition def, AttributionEngine.ReportRequest request) {
+        if (!def.getEnabled() || def.getConversionType() == null || def.getConversionType().isEmpty()) {
+            return false;
+        }
+        String ruleJson = def.getCallbackRule();
+        if (ruleJson == null || ruleJson.isBlank()) {
+            return true;
+        }
+        try {
+            CallbackRule rule = objectMapper.readValue(ruleJson, CallbackRule.class);
+            return evaluate(rule, request, true);
+        } catch (JsonProcessingException e) {
+            log.warn("回传规则解析失败, 降级为无条件回传: event={}", def.getEventName(), e);
+            return true;
+        }
+    }
+
+    private boolean evaluate(CallbackRule rule, AttributionEngine.ReportRequest request, boolean claimWindow) {
         if (rule == null) return true;
         return switch (rule.getType()) {
             case "threshold" -> evalThreshold(rule, request);
-            case "time_window" -> evalTimeWindow(rule, request);
-            case "and" -> evalAnd(rule, request);
-            case "or" -> evalOr(rule, request);
+            case "time_window" -> evalTimeWindow(rule, request, claimWindow);
+            case "and" -> evalAnd(rule, request, claimWindow);
+            case "or" -> evalOr(rule, request, claimWindow);
             default -> true;
         };
     }
@@ -69,7 +86,7 @@ public class CallbackRuleEvaluator {
         };
     }
 
-    private boolean evalTimeWindow(CallbackRule rule, AttributionEngine.ReportRequest request) {
+    private boolean evalTimeWindow(CallbackRule rule, AttributionEngine.ReportRequest request, boolean claimWindow) {
         Integer windowMinutes = rule.getWindowMinutes();
         if (windowMinutes == null || windowMinutes <= 0) return true;
 
@@ -78,25 +95,30 @@ public class CallbackRuleEvaluator {
         if (oaid == null || oaid.isEmpty()) return true;
 
         String key = RULE_LOCK_PREFIX + scope + ":" + request.getGameId() + ":" + request.getEvent() + ":" + oaid;
+        if (!claimWindow) {
+            Boolean exists = stringRedisTemplate.hasKey(key);
+            return exists == null || !exists;
+        }
+
         Boolean locked = stringRedisTemplate.opsForValue()
                 .setIfAbsent(key, "1", windowMinutes, TimeUnit.MINUTES);
         return locked != null && locked;
     }
 
-    private boolean evalAnd(CallbackRule rule, AttributionEngine.ReportRequest request) {
+    private boolean evalAnd(CallbackRule rule, AttributionEngine.ReportRequest request, boolean claimWindow) {
         List<CallbackRule> rules = rule.getRules();
         if (rules == null || rules.isEmpty()) return true;
         for (CallbackRule r : rules) {
-            if (!evaluate(r, request)) return false;
+            if (!evaluate(r, request, claimWindow)) return false;
         }
         return true;
     }
 
-    private boolean evalOr(CallbackRule rule, AttributionEngine.ReportRequest request) {
+    private boolean evalOr(CallbackRule rule, AttributionEngine.ReportRequest request, boolean claimWindow) {
         List<CallbackRule> rules = rule.getRules();
         if (rules == null || rules.isEmpty()) return true;
         for (CallbackRule r : rules) {
-            if (evaluate(r, request)) return true;
+            if (evaluate(r, request, claimWindow)) return true;
         }
         return false;
     }

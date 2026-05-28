@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS game_config (
     secret_key           VARCHAR(512) NOT NULL COMMENT '鲸鸿动能密钥(AES-GCM加密存储)',
     attribution_window_days INT DEFAULT 30 COMMENT '归因窗口(天)',
     callback_retry_max   INT DEFAULT 3 COMMENT '回传最大重试次数',
+    window_config        JSON COMMENT '归因窗口期配置',
     fingerprint_fallback TINYINT DEFAULT 1 COMMENT '是否启用指纹降级匹配 0=否 1=是',
     status               TINYINT DEFAULT 1 COMMENT '0=停用 1=启用',
     created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS event_definition (
     display_name    VARCHAR(128) COMMENT '显示名称',
     conversion_type VARCHAR(32)  COMMENT '映射鲸鸿动能 conversion_type,NULL表示不回传',
     param_schema    JSON         COMMENT '参数 JSON Schema',
+    callback_rule   JSON         COMMENT '回传规则，NULL表示无条件回传',
     is_preset       TINYINT DEFAULT 0 COMMENT '是否预置事件',
     enabled         TINYINT DEFAULT 1 COMMENT '0=停用 1=启用',
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -47,6 +49,8 @@ CREATE TABLE IF NOT EXISTS click_record (
     id              BIGINT PRIMARY KEY AUTO_INCREMENT,
     game_id         VARCHAR(64)  NOT NULL COMMENT '游戏ID',
     oaid            VARCHAR(128) NOT NULL COMMENT '设备OAID',
+    gaid            VARCHAR(128) COMMENT 'Google广告ID',
+    idfa            VARCHAR(128) COMMENT 'iOS广告ID',
     callback        TEXT         NOT NULL COMMENT '鲸鸿动能 callback原文',
     campaign_id     VARCHAR(64)  COMMENT '计划ID',
     adgroup_id      VARCHAR(64)  COMMENT '任务ID',
@@ -58,8 +62,11 @@ CREATE TABLE IF NOT EXISTS click_record (
     action_type     VARCHAR(20)  COMMENT 'CLICK/IMP/DEEPLINKCLICK',
     tracking_enabled VARCHAR(4)  COMMENT '0/1',
     matched         TINYINT DEFAULT 0 COMMENT '是否已归因匹配',
+    version         BIGINT DEFAULT 0 COMMENT '乐观锁版本号',
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_game_oaid (game_id, oaid),
+    INDEX idx_click_gaid (game_id, gaid),
+    INDEX idx_click_idfa (game_id, idfa),
     INDEX idx_click_time (click_time)
 ) COMMENT='点击记录';
 
@@ -81,14 +88,29 @@ CREATE TABLE IF NOT EXISTS attribution_record (
     attribution_type  VARCHAR(32)  DEFAULT 'oaid' COMMENT '归因方式 oaid/fingerprint/channel',
     callback_status   VARCHAR(32)  DEFAULT 'pending' COMMENT '回传状态 pending/success/failed/unmatched/no_callback',
     callback_response TEXT         COMMENT '华为回传响应',
+    debug_mode        TINYINT DEFAULT 0 COMMENT '是否调试模式',
+    reattribution     TINYINT DEFAULT 0 COMMENT '是否再归因',
     retry_count       INT DEFAULT 0 COMMENT '重试次数',
     dedupe_key        VARCHAR(128) COMMENT '业务幂等键',
     created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_attribution_dedupe_key (dedupe_key),
     INDEX idx_game_oaid (game_id, oaid),
     INDEX idx_game_event (game_id, event_type),
+    INDEX idx_attr_game_event_status_time (game_id, event_type, callback_status, created_at),
     INDEX idx_conversion_time (conversion_time)
 ) COMMENT='归因记录';
+
+-- 异步事件处理任务表
+CREATE TABLE IF NOT EXISTS event_task (
+    id              BIGINT PRIMARY KEY AUTO_INCREMENT,
+    game_id         VARCHAR(64)  NOT NULL COMMENT '游戏ID',
+    request_json    TEXT         NOT NULL COMMENT '原始上报请求 JSON',
+    status          VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT 'pending/processing/done/failed',
+    result_json     TEXT         NULL COMMENT '处理结果 JSON',
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_status_created (status, created_at)
+) COMMENT='异步事件处理任务';
 
 -- 持久化回传任务表
 CREATE TABLE IF NOT EXISTS callback_task (

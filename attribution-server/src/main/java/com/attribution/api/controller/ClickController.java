@@ -46,6 +46,9 @@ public class ClickController {
             @RequestParam(value = "gameId", required = false) String gameIdCamel,
             @RequestParam("callback") String callback,
             @RequestParam(value = "oaid", required = false) String oaid,
+            @RequestParam(value = "gaid", required = false) String gaid,
+            @RequestParam(value = "google_adid", required = false) String googleAdid,
+            @RequestParam(value = "idfa", required = false) String idfa,
             @RequestParam(value = "campaign_id", required = false) String campaignId,
             @RequestParam(value = "campaignId", required = false) String campaignIdCamel,
             @RequestParam(value = "adgroup_id", required = false) String adgroupId,
@@ -87,24 +90,28 @@ public class ClickController {
             return "error";
         }
 
-        String safeOaid = oaid != null ? oaid.substring(0, Math.min(oaid.length(), 128)) : "";
+        String safeOaid = normalizeDeviceId(oaid);
+        String safeGaid = normalizeDeviceId(gaid != null ? gaid : googleAdid);
+        String safeIdfa = normalizeDeviceId(idfa);
         String finalUa = ua != null ? ua : userAgent;
         Long clickTime = ts != null ? ts : (traceTime != null ? traceTime * 1000 : System.currentTimeMillis());
 
-        // oaid 为空时跳过 Redis 缓存，避免不同设备共享同一 key
-        if (!safeOaid.isEmpty()) {
-            String redisKey = RedisKeyUtil.clickCacheKey(gameId, safeOaid);
-            ClickCache cache = new ClickCache(
-                    decodedCallback, campaignId, adgroupId, contentId,
-                    clickTime, platform, actionType, trackingEnabled
-            );
-            cache.setOaid(safeOaid);
-            redisTemplate.opsForValue().set(redisKey, cache, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
-        }
+        ClickCache cache = new ClickCache(
+                decodedCallback, campaignId, adgroupId, contentId,
+                clickTime, platform, actionType, trackingEnabled
+        );
+        cache.setOaid(safeOaid);
+        cache.setGaid(safeGaid);
+        cache.setIdfa(safeIdfa);
+        cacheDeviceClick(gameId, "oaid", safeOaid, cache);
+        cacheDeviceClick(gameId, "gaid", safeGaid, cache);
+        cacheDeviceClick(gameId, "idfa", safeIdfa, cache);
 
         ClickRecord record = new ClickRecord();
         record.setGameId(gameId);
         record.setOaid(safeOaid);
+        record.setGaid(safeGaid);
+        record.setIdfa(safeIdfa);
         record.setCallback(decodedCallback);
         record.setCampaignId(campaignId);
         record.setAdgroupId(adgroupId);
@@ -139,6 +146,22 @@ public class ClickController {
             log.debug("callback URL 解码失败, 使用原始值: {}", raw);
             return raw;
         }
+    }
+
+    private void cacheDeviceClick(String gameId, String idType, String deviceId, ClickCache cache) {
+        if (deviceId == null || deviceId.isEmpty()) {
+            return;
+        }
+        String redisKey = RedisKeyUtil.deviceClickCacheKey(gameId, idType, deviceId);
+        redisTemplate.opsForValue().set(redisKey, cache, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
+    }
+
+    private String normalizeDeviceId(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String trimmed = value.trim();
+        return trimmed.substring(0, Math.min(trimmed.length(), 128));
     }
 
     private long normalizedClickCacheTtlDays() {

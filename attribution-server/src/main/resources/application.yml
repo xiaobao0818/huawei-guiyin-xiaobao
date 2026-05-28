@@ -44,6 +44,10 @@ attribution:
   callback-worker-claim-timeout-minutes: 10
   click-rate-limit-max: 100
   click-rate-limit-window-seconds: 60
+  security:
+    swagger-public: false
+    h2-console-public: false
+    metrics-public: false
 
 logging:
   level:

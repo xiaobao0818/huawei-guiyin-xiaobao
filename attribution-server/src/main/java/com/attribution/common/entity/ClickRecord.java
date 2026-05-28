@@ -17,6 +17,12 @@ public class ClickRecord {
     @Column(name = "oaid", nullable = false, length = 128)
     private String oaid;
 
+    @Column(name = "gaid", length = 128)
+    private String gaid;
+
+    @Column(name = "idfa", length = 128)
+    private String idfa;
+
     @Column(name = "callback", columnDefinition = "TEXT")
     private String callback;
 
@@ -65,6 +71,10 @@ public class ClickRecord {
     public void setGameId(String gameId) { this.gameId = gameId; }
     public String getOaid() { return oaid; }
     public void setOaid(String oaid) { this.oaid = oaid; }
+    public String getGaid() { return gaid; }
+    public void setGaid(String gaid) { this.gaid = gaid; }
+    public String getIdfa() { return idfa; }
+    public void setIdfa(String idfa) { this.idfa = idfa; }
     public String getCallback() { return callback; }
     public void setCallback(String callback) { this.callback = callback; }
     public String getCampaignId() { return campaignId; }

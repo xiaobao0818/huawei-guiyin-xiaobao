@@ -2,6 +2,7 @@ package com.attribution;
 
 import com.attribution.common.entity.EventDefinition;
 import com.attribution.common.entity.GameConfig;
+import com.attribution.common.entity.ClickRecord;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.ClickRecordRepository;
 import com.attribution.common.repository.EventDefinitionRepository;
@@ -49,6 +50,8 @@ class AttributionEngineTest {
     @BeforeEach
     void setUp() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.setIfAbsent(anyString(), eq("1"), eq(180L), eq(TimeUnit.DAYS)))
+                .thenReturn(true);
 
         // Delete test data (cascade due to FK order)
         attributionRecordRepo.deleteAll();
@@ -163,6 +166,48 @@ class AttributionEngineTest {
         var records = attributionRecordRepo.findAll();
         assertEquals(1, records.size());
         assertEquals(12.50, records.get(0).getRevenue(), 0.01);
+    }
+
+    @Test
+    void process_gaidMatchesClickRecord() {
+        ClickRecord click = new ClickRecord();
+        click.setGameId("test_game");
+        click.setOaid("");
+        click.setGaid("gaid-123");
+        click.setCallback("callback-token");
+        click.setClickTime(System.currentTimeMillis());
+        click.setMatched(false);
+        clickRecordRepo.save(click);
+
+        var req = newRequest("test_game", "activate", "");
+        req.getDevice().setGaid("gaid-123");
+
+        var result = engine.process(req);
+
+        assertTrue(result.isSuccess());
+        assertEquals("matched", result.getStatus());
+        var records = attributionRecordRepo.findAll();
+        assertEquals(1, records.size());
+        assertEquals("gaid", records.get(0).getAttributionType());
+    }
+
+    @Test
+    void process_activateAfterProtection_allowsReattribution() {
+        var first = newRequest("test_game", "activate", "oaid-reattr");
+        assertTrue(engine.process(first).isSuccess());
+
+        var existing = attributionRecordRepo.findAll().get(0);
+        existing.setCreatedAt(java.time.LocalDateTime.now().minusDays(10));
+        attributionRecordRepo.save(existing);
+
+        var second = newRequest("test_game", "activate", "oaid-reattr");
+        var result = engine.process(second);
+
+        assertTrue(result.isSuccess());
+        assertNotEquals("already_processed", result.getStatus());
+        assertEquals(2, attributionRecordRepo.findAll().size());
+        assertTrue(attributionRecordRepo.findAll().stream()
+                .anyMatch(record -> Boolean.TRUE.equals(record.getReattribution())));
     }
 
     private AttributionEngine.ReportRequest newRequest(String gameId, String event, String oaid) {

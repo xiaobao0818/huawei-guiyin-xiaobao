@@ -86,12 +86,6 @@ public class AttributionEngine {
             return ProcessResult.fail("游戏未注册或已停用: " + request.getGameId());
         }
 
-        String dedupeKey = buildDedupeKey(request);
-        if (dedupeKey != null && attributionRecordRepo.existsByDedupeKey(dedupeKey)) {
-            log.info("事件已处理过，跳过: game={}, event={}", request.getGameId(), request.getEvent());
-            return ProcessResult.ok(null, "already_processed", null);
-        }
-
         // 2. 查询事件配置
         var eventDef = eventRouter.lookup(request.getGameId(), request.getEvent()).orElse(null);
         if (eventDef == null || !eventDef.getEnabled()) {
@@ -101,24 +95,20 @@ public class AttributionEngine {
         String conversionType = eventDef.getConversionType();
         boolean needCallback = ruleEvaluator.shouldCallback(eventDef, request);
 
-        boolean isReattribution = false;
-
-        // 3. 如果是activate，检查再归因
-        if ("activate".equals(request.getEvent())) {
-            String oaid = getOaid(request);
-            if (oaid != null && !oaid.isEmpty()) {
-                String lockKey = RedisKeyUtil.activeLockKey(request.getGameId(), oaid);
-                Boolean locked = redisTemplate.opsForValue()
-                        .setIfAbsent(lockKey, "1", 180, TimeUnit.DAYS);
-                if (locked == null || !locked) {
-                    // 锁已存在，检查是否应触发再归因
-                    isReattribution = checkReattribution(request.getGameId(), oaid, gameConfig);
-                    if (!isReattribution) {
-                        log.info("激活在保护期内，跳过: game={}, oaid={}", request.getGameId(), oaid);
-                        return ProcessResult.ok(null, "already_processed", null);
-                    }
-                }
+        ActivationDecision activationDecision = ActivationDecision.process(false);
+        if (EventConstants.ACTIVATE.equals(request.getEvent())) {
+            activationDecision = evaluateActivation(request, gameConfig);
+            if (activationDecision.shouldSkip()) {
+                log.info("激活在保护期内，跳过: game={}, oaid={}", request.getGameId(), getOaid(request));
+                return ProcessResult.ok(null, "already_processed", conversionType);
             }
+        }
+
+        boolean isReattribution = activationDecision.isReattribution();
+        String dedupeKey = buildDedupeKey(request, isReattribution);
+        if (dedupeKey != null && attributionRecordRepo.existsByDedupeKey(dedupeKey)) {
+            log.info("事件已处理过，跳过: game={}, event={}", request.getGameId(), request.getEvent());
+            return ProcessResult.ok(null, "already_processed", conversionType);
         }
 
         // 4. 多设备ID匹配: OAID → GAID → IDFA → 指纹降级
@@ -212,6 +202,15 @@ public class AttributionEngine {
             }
         }
 
+        boolean callbackWindowClaimed = true;
+        if (needCallback && matchResult != null) {
+            callbackWindowClaimed = ruleEvaluator.claimCallbackWindow(eventDef, request);
+            if (!callbackWindowClaimed) {
+                log.info("回传窗口规则命中，跳过回传: game={}, event={}, type={}",
+                        request.getGameId(), request.getEvent(), matchResult.getMatchType());
+            }
+        }
+
         if (matchResult != null) {
             record.setClickId(matchResult.getClickRecordId());
             record.setCallback(matchResult.getClickCache().getCallback());
@@ -224,21 +223,11 @@ public class AttributionEngine {
                 });
             }
 
-            String redisKey = RedisKeyUtil.clickCacheKey(request.getGameId(), getOaid(request));
-            Object cached = redisTemplate.opsForValue().get(redisKey);
-            if (cached != null) {
-                if (cached instanceof ClickCache cc) {
-                    cc.setConverted(true);
-                    Long ttlSeconds = redisTemplate.getExpire(redisKey, TimeUnit.SECONDS);
-                    if (ttlSeconds != null && ttlSeconds > 0) {
-                        redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
-                    } else {
-                        redisTemplate.opsForValue().set(redisKey, cc, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
-                    }
-                }
-            }
+            markClickCacheConverted(request, matchResult);
 
-            record.setCallbackStatus(CallbackStatus.PENDING.getCode());
+            record.setCallbackStatus(needCallback && callbackWindowClaimed
+                    ? CallbackStatus.PENDING.getCode()
+                    : CallbackStatus.NO_CALLBACK.getCode());
         } else {
             record.setAttributionType(
                     attributionType != null ? attributionType :
@@ -261,13 +250,7 @@ public class AttributionEngine {
         }
 
         // 7. 异步回传
-        if (needCallback && matchResult != null) {
-            AttributionContext ctx = buildAttributionContext(record, matchResult, request, conversionType);
-            retryService.enqueue(ctx, gameConfig);
-        }
-
-        // 7b. 再归因回传
-        if (isReattribution && matchResult != null) {
+        if (needCallback && callbackWindowClaimed && matchResult != null) {
             AttributionContext ctx = buildAttributionContext(record, matchResult, request, conversionType);
             retryService.enqueue(ctx, gameConfig);
         }
@@ -298,7 +281,7 @@ public class AttributionEngine {
         AttributionContext ctx = new AttributionContext();
         ctx.setAttributionRecordId(record.getId());
         ctx.setGameId(request.getGameId());
-        ctx.setOaid(getOaid(request));
+        ctx.setOaid(resolveCallbackOaid(request, matchResult));
         ctx.setEventType(request.getEvent());
         ctx.setConversionType(conversionType);
         ctx.setCallback(matchResult.getClickCache().getCallback());
@@ -309,6 +292,49 @@ public class AttributionEngine {
         ctx.setCampaignId(matchResult.getClickCache().getCampaignId());
         ctx.setTrackingEnabled(matchResult.getClickCache().getTrackingEnabled());
         return ctx;
+    }
+
+    private void markClickCacheConverted(ReportRequest request, OaidMatcher.MatchResult matchResult) {
+        String matchedDeviceId = getMatchedDeviceId(request, matchResult);
+        if (matchedDeviceId == null || matchedDeviceId.isEmpty()) {
+            return;
+        }
+
+        String redisKey = RedisKeyUtil.deviceClickCacheKey(
+                request.getGameId(), matchResult.getMatchType(), matchedDeviceId);
+        Object cached = redisTemplate.opsForValue().get(redisKey);
+        if (cached == null) {
+            return;
+        }
+
+        ClickCache cc = cached instanceof ClickCache
+                ? (ClickCache) cached
+                : objectMapper.convertValue(cached, ClickCache.class);
+        cc.setConverted(true);
+        Long ttlSeconds = redisTemplate.getExpire(redisKey, TimeUnit.SECONDS);
+        if (ttlSeconds != null && ttlSeconds > 0) {
+            redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
+        } else {
+            redisTemplate.opsForValue().set(redisKey, cc, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
+        }
+    }
+
+    private String getMatchedDeviceId(ReportRequest request, OaidMatcher.MatchResult matchResult) {
+        return switch (matchResult.getMatchType()) {
+            case "gaid" -> getGaid(request);
+            case "idfa" -> getIdfa(request);
+            case "oaid" -> getOaid(request);
+            default -> "";
+        };
+    }
+
+    private String resolveCallbackOaid(ReportRequest request, OaidMatcher.MatchResult matchResult) {
+        String oaid = getOaid(request);
+        if (oaid != null && !oaid.isEmpty()) {
+            return oaid;
+        }
+        String clickedOaid = matchResult.getClickCache().getOaid();
+        return clickedOaid != null ? clickedOaid : "";
     }
 
 
@@ -324,12 +350,27 @@ public class AttributionEngine {
         return request.getDevice() != null ? request.getDevice().getIdfa() : "";
     }
 
-    private boolean checkReattribution(String gameId, String oaid, GameConfig gameConfig) {
-        var existingOpt = attributionRecordRepo.findFirstByGameIdAndOaidAndEventTypeOrderByCreatedAtDesc(
-                gameId, oaid, "activate");
-        if (existingOpt.isEmpty()) return false;
+    private ActivationDecision evaluateActivation(ReportRequest request, GameConfig gameConfig) {
+        String oaid = getOaid(request);
+        if (oaid == null || oaid.isEmpty()) {
+            return ActivationDecision.process(false);
+        }
 
-        var existing = existingOpt.get();
+        var existingOpt = attributionRecordRepo.findFirstByGameIdAndOaidAndEventTypeOrderByCreatedAtDesc(
+                request.getGameId(), oaid, EventConstants.ACTIVATE);
+        if (existingOpt.isPresent()) {
+            return isReattributionAllowed(existingOpt.get(), gameConfig)
+                    ? ActivationDecision.process(true)
+                    : ActivationDecision.skip();
+        }
+
+        String lockKey = RedisKeyUtil.activeLockKey(request.getGameId(), oaid);
+        Boolean locked = redisTemplate.opsForValue()
+                .setIfAbsent(lockKey, "1", 180, TimeUnit.DAYS);
+        return locked == null || !locked ? ActivationDecision.skip() : ActivationDecision.process(false);
+    }
+
+    private boolean isReattributionAllowed(AttributionRecord existing, GameConfig gameConfig) {
         var config = parseWindowConfig(gameConfig.getWindowConfig());
         int protectionDays = getConfigInt(config, "protection_days", 7);
         int silenceDays = getConfigInt(config, "silence_days", 3);
@@ -359,11 +400,17 @@ public class AttributionEngine {
         return defaultVal;
     }
 
-    private String buildDedupeKey(ReportRequest request) {
+    private String buildDedupeKey(ReportRequest request, boolean isReattribution) {
         String oaid = getOaid(request);
         String source = null;
         if ("activate".equals(request.getEvent()) && oaid != null && !oaid.isEmpty()) {
-            source = request.getGameId() + ":activate:" + oaid;
+            if (isReattribution) {
+                long ts = request.getTs() != null ? request.getTs() : System.currentTimeMillis();
+                long dayBucket = ts / (24 * 60 * 60 * 1000);
+                source = request.getGameId() + ":activate:reattribution:" + oaid + ":" + dayBucket;
+            } else {
+                source = request.getGameId() + ":activate:first:" + oaid;
+            }
         } else if (request.getEventParams() != null) {
             Object explicitEventId = request.getEventParams().get("event_id");
             if (explicitEventId == null) {
@@ -412,6 +459,27 @@ public class AttributionEngine {
 
     private long normalizedClickCacheTtlDays() {
         return Math.max(1, clickCacheTtlDays);
+    }
+
+    private static class ActivationDecision {
+        private final boolean skip;
+        private final boolean reattribution;
+
+        private ActivationDecision(boolean skip, boolean reattribution) {
+            this.skip = skip;
+            this.reattribution = reattribution;
+        }
+
+        static ActivationDecision skip() {
+            return new ActivationDecision(true, false);
+        }
+
+        static ActivationDecision process(boolean reattribution) {
+            return new ActivationDecision(false, reattribution);
+        }
+
+        boolean shouldSkip() { return skip; }
+        boolean isReattribution() { return reattribution; }
     }
 
     public static class ProcessResult {

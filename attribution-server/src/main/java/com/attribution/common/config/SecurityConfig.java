@@ -19,6 +19,15 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 public class SecurityConfig {
 
+    @Value("${attribution.security.swagger-public:false}")
+    private boolean swaggerPublic;
+
+    @Value("${attribution.security.h2-console-public:false}")
+    private boolean h2ConsolePublic;
+
+    @Value("${attribution.security.metrics-public:false}")
+    private boolean metricsPublic;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                     ReportApiKeyFilter reportApiKeyFilter,
@@ -30,16 +39,33 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .headers(headers -> headers.frameOptions(frameOptions -> frameOptions.sameOrigin()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/api/v1/health", "/api/v1/health/**", "/api/v1/click").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/report").permitAll()
-                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/prometheus").permitAll()
-                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                        .requestMatchers("/h2-console/**").permitAll()
-                        .requestMatchers("/admin/api/**").hasRole("ADMIN")
-                        .anyRequest().permitAll()
-                )
+                .authorizeHttpRequests(auth -> {
+                    auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
+                    auth.requestMatchers("/api/v1/health", "/api/v1/health/**", "/api/v1/click").permitAll();
+                    auth.requestMatchers(HttpMethod.POST, "/api/v1/report").permitAll();
+                    auth.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();
+
+                    if (metricsPublic) {
+                        auth.requestMatchers("/actuator/prometheus", "/actuator/metrics/**").permitAll();
+                    } else {
+                        auth.requestMatchers("/actuator/prometheus", "/actuator/metrics/**").hasRole("ADMIN");
+                    }
+
+                    if (swaggerPublic) {
+                        auth.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll();
+                    } else {
+                        auth.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").hasRole("ADMIN");
+                    }
+
+                    if (h2ConsolePublic) {
+                        auth.requestMatchers("/h2-console/**").permitAll();
+                    } else {
+                        auth.requestMatchers("/h2-console/**").denyAll();
+                    }
+
+                    auth.requestMatchers("/admin/api/**").hasRole("ADMIN");
+                    auth.anyRequest().denyAll();
+                })
                 .httpBasic(Customizer.withDefaults())
                 .addFilterBefore(debugApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(clickRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
