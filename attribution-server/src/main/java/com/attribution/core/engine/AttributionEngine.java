@@ -10,8 +10,10 @@ import com.attribution.core.callback.AttributionContext;
 import com.attribution.core.event.EventRouter;
 import com.attribution.core.matcher.FingerprintMatcher;
 import com.attribution.core.matcher.OaidMatcher;
+import com.attribution.core.metrics.AttributionMetrics;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,6 +41,7 @@ public class AttributionEngine {
     private final CallbackRetryService retryService;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper objectMapper;
+    private final AttributionMetrics metrics;
 
     @Value("${attribution.fingerprint-match-minutes:30}")
     private int fingerprintMatchMinutes;
@@ -54,7 +57,8 @@ public class AttributionEngine {
                              FingerprintMatcher fingerprintMatcher,
                              CallbackRetryService retryService,
                              RedisTemplate<String, Object> redisTemplate,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             AttributionMetrics metrics) {
         this.gameConfigRepo = gameConfigRepo;
         this.clickRecordRepo = clickRecordRepo;
         this.attributionRecordRepo = attributionRecordRepo;
@@ -64,9 +68,13 @@ public class AttributionEngine {
         this.retryService = retryService;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     public ProcessResult process(ReportRequest request) {
+        Timer.Sample timer = metrics.startProcessingTimer();
+        metrics.recordEvent(request.getGameId(), request.getEvent());
+
         // 1. 校验游戏配置
         GameConfig gameConfig = gameConfigRepo.findByGameIdAndStatusTrue(request.getGameId()).orElse(null);
         if (gameConfig == null) {
@@ -243,6 +251,18 @@ public class AttributionEngine {
 
         log.info("归因处理完成: game={}, event={}, matched={}",
                 request.getGameId(), request.getEvent(), matchResult != null);
+
+        // Record metrics
+        if (matchResult != null) {
+            if ("oaid".equals(matchResult.getMatchType())) {
+                metrics.recordMatchOaid(request.getGameId());
+            } else if ("fingerprint".equals(matchResult.getMatchType())) {
+                metrics.recordMatchFingerprint(request.getGameId());
+            }
+        } else if (needCallback) {
+            metrics.recordNoMatch(request.getGameId());
+        }
+        metrics.stopProcessingTimer(timer);
 
         return ProcessResult.ok(record.getId(), matchResult != null ? "matched" : "no_match", conversionType);
     }

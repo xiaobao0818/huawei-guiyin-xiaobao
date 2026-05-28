@@ -7,6 +7,7 @@ import com.attribution.common.repository.CallbackTaskRepository;
 import com.attribution.common.repository.GameConfigRepository;
 import com.attribution.core.callback.AttributionContext;
 import com.attribution.core.callback.CallbackService;
+import com.attribution.core.metrics.AttributionMetrics;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -43,6 +44,7 @@ public class CallbackRetryService {
     private final CallbackService callbackService;
     private final ObjectMapper objectMapper;
     private final StringRedisTemplate stringRedisTemplate;
+    private final AttributionMetrics metrics;
 
     @Value("${attribution.callback-retry-base-seconds:5}")
     private long retryBaseSeconds;
@@ -55,13 +57,15 @@ public class CallbackRetryService {
                                 GameConfigRepository gameConfigRepo,
                                 CallbackService callbackService,
                                 ObjectMapper objectMapper,
-                                StringRedisTemplate stringRedisTemplate) {
+                                StringRedisTemplate stringRedisTemplate,
+                                AttributionMetrics metrics) {
         this.callbackTaskRepo = callbackTaskRepo;
         this.attributionRecordRepo = attributionRecordRepo;
         this.gameConfigRepo = gameConfigRepo;
         this.callbackService = callbackService;
         this.objectMapper = objectMapper;
         this.stringRedisTemplate = stringRedisTemplate;
+        this.metrics = metrics;
     }
 
     public void enqueue(AttributionContext ctx, GameConfig gameConfig) {
@@ -134,6 +138,7 @@ public class CallbackRetryService {
 
         CallbackService.CallbackResult result = callbackService.sendAttribution(ctx, gameConfig);
         if (result.isSuccess()) {
+            metrics.recordCallbackSuccess(task.getGameId());
             task.setStatus(STATUS_SUCCESS);
             task.setLastError(null);
             task.setNextRetryAt(LocalDateTime.now());
@@ -145,11 +150,13 @@ public class CallbackRetryService {
         String error = result.getResponseBody() != null ? result.getResponseBody() : "回传失败";
         task.setLastError(error);
         if (attemptCount < task.getMaxAttempts()) {
+            metrics.recordCallbackRetry(task.getGameId(), attemptCount);
             task.setStatus(STATUS_RETRY_PENDING);
             task.setNextRetryAt(LocalDateTime.now().plusSeconds(delaySeconds(attemptCount)));
             callbackTaskRepo.save(task);
             updateRecordRetryCount(task.getAttributionId(), Math.max(0, attemptCount - 1), "pending", error);
         } else {
+            metrics.recordCallbackFailure(task.getGameId());
             task.setStatus(STATUS_DEAD);
             task.setNextRetryAt(LocalDateTime.now());
             callbackTaskRepo.save(task);

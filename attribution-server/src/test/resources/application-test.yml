@@ -1,0 +1,37 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:attribution_test;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+  flyway:
+    enabled: false
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+attribution:
+  encryption-key: test-32-char-encryption-key!!!
+  api-key: test-api-key
+  callback-url: https://test.example.com/callback
+  callback-retry-max: 3
+  callback-retry-base-seconds: 1
+  attribution-window-days: 30
+  fingerprint-match-minutes: 30
+  click-cache-ttl-days: 7
+  callback-worker-fixed-delay-ms: 60000
+  click-rate-limit-max: 1000
+  click-rate-limit-window-seconds: 60
+
+admin:
+  username: admin
+  password: admin123
+
+logging:
+  level:
+    com.attribution: WARN

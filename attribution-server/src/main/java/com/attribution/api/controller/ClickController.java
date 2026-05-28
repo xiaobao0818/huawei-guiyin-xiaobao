@@ -5,6 +5,7 @@ import com.attribution.common.entity.ClickCache;
 import com.attribution.common.repository.ClickRecordRepository;
 import com.attribution.common.repository.GameConfigRepository;
 import com.attribution.common.util.RedisKeyUtil;
+import com.attribution.core.metrics.AttributionMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,16 +23,19 @@ public class ClickController {
     private final ClickRecordRepository clickRecordRepo;
     private final GameConfigRepository gameConfigRepo;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final AttributionMetrics metrics;
 
     @Value("${attribution.click-cache-ttl-days:7}")
     private long clickCacheTtlDays;
 
     public ClickController(ClickRecordRepository clickRecordRepo,
                            GameConfigRepository gameConfigRepo,
-                           RedisTemplate<String, Object> redisTemplate) {
+                           RedisTemplate<String, Object> redisTemplate,
+                           AttributionMetrics metrics) {
         this.clickRecordRepo = clickRecordRepo;
         this.gameConfigRepo = gameConfigRepo;
         this.redisTemplate = redisTemplate;
+        this.metrics = metrics;
     }
 
     @GetMapping("/click")
@@ -112,6 +116,7 @@ public class ClickController {
         }
 
         log.info("点击回调: game={}, oaid={}, campaign={}", gameId, safeOaid, campaignId);
+        metrics.recordClickReceived(gameId);
         return "success";
     }
 
