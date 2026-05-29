@@ -1,6 +1,7 @@
 package com.attribution.core.engine;
 
 import com.attribution.common.entity.EventDefinition;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -38,8 +39,8 @@ public class CallbackRuleEvaluator {
             CallbackRule rule = objectMapper.readValue(ruleJson, CallbackRule.class);
             return evaluate(rule, request, false);
         } catch (JsonProcessingException e) {
-            log.warn("回传规则解析失败, 降级为无条件回传: event={}", def.getEventName(), e);
-            return true;
+            log.warn("回传规则解析失败，跳过回传: event={}", def.getEventName(), e);
+            return false;
         }
     }
 
@@ -55,8 +56,8 @@ public class CallbackRuleEvaluator {
             CallbackRule rule = objectMapper.readValue(ruleJson, CallbackRule.class);
             return evaluate(rule, request, true);
         } catch (JsonProcessingException e) {
-            log.warn("回传规则解析失败, 降级为无条件回传: event={}", def.getEventName(), e);
-            return true;
+            log.warn("回传规则解析失败，跳过回传窗口认领: event={}", def.getEventName(), e);
+            return false;
         }
     }
 
@@ -67,7 +68,7 @@ public class CallbackRuleEvaluator {
             case "time_window" -> evalTimeWindow(rule, request, claimWindow);
             case "and" -> evalAnd(rule, request, claimWindow);
             case "or" -> evalOr(rule, request, claimWindow);
-            default -> true;
+            default -> false;
         };
     }
 
@@ -82,7 +83,7 @@ public class CallbackRuleEvaluator {
             case "lte" -> numValue <= threshold;
             case "lt" -> numValue < threshold;
             case "eq" -> Math.abs(numValue - threshold) < 1e-9;
-            default -> true;
+            default -> false;
         };
     }
 
@@ -90,19 +91,25 @@ public class CallbackRuleEvaluator {
         Integer windowMinutes = rule.getWindowMinutes();
         if (windowMinutes == null || windowMinutes <= 0) return true;
 
-        String scope = rule.getScope() != null ? rule.getScope() : "game:oaid";
-        String oaid = request.getDevice() != null ? request.getDevice().getOaid() : "";
-        if (oaid == null || oaid.isEmpty()) return true;
+        String scope = rule.getScope() != null ? rule.getScope() : "game:device";
+        String deviceKey = deviceKey(request);
+        if (deviceKey == null || deviceKey.isEmpty()) return true;
 
-        String key = RULE_LOCK_PREFIX + scope + ":" + request.getGameId() + ":" + request.getEvent() + ":" + oaid;
-        if (!claimWindow) {
-            Boolean exists = stringRedisTemplate.hasKey(key);
-            return exists == null || !exists;
+        String key = RULE_LOCK_PREFIX + scope + ":" + request.getGameId() + ":" + request.getEvent() + ":" + deviceKey;
+        try {
+            if (!claimWindow) {
+                Boolean exists = stringRedisTemplate.hasKey(key);
+                return exists == null || !exists;
+            }
+
+            Boolean locked = stringRedisTemplate.opsForValue()
+                    .setIfAbsent(key, "1", windowMinutes, TimeUnit.MINUTES);
+            return locked != null && locked;
+        } catch (Exception e) {
+            log.warn("回传窗口规则Redis访问失败，按未命中处理: game={}, event={}",
+                    request.getGameId(), request.getEvent(), e);
+            return true;
         }
-
-        Boolean locked = stringRedisTemplate.opsForValue()
-                .setIfAbsent(key, "1", windowMinutes, TimeUnit.MINUTES);
-        return locked != null && locked;
     }
 
     private boolean evalAnd(CallbackRule rule, AttributionEngine.ReportRequest request, boolean claimWindow) {
@@ -139,11 +146,28 @@ public class CallbackRuleEvaluator {
         catch (NumberFormatException e) { return 0; }
     }
 
+    private String deviceKey(AttributionEngine.ReportRequest request) {
+        if (request.getDevice() == null) {
+            return "";
+        }
+        if (request.getDevice().getOaid() != null && !request.getDevice().getOaid().isBlank()) {
+            return "oaid:" + request.getDevice().getOaid();
+        }
+        if (request.getDevice().getGaid() != null && !request.getDevice().getGaid().isBlank()) {
+            return "gaid:" + request.getDevice().getGaid();
+        }
+        if (request.getDevice().getIdfa() != null && !request.getDevice().getIdfa().isBlank()) {
+            return "idfa:" + request.getDevice().getIdfa();
+        }
+        return "";
+    }
+
     public static class CallbackRule {
         private String type;
         private String field;
         private String operator;
         private Double value;
+        @JsonAlias("window_minutes")
         private Integer windowMinutes;
         private String scope;
         private List<CallbackRule> rules;

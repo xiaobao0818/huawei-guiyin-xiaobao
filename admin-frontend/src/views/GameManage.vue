@@ -27,7 +27,7 @@
       <el-table-column label="操作" min-width="200">
         <template #default="{ row }">
           <el-button size="small" @click="openDialog(row)">编辑</el-button>
-          <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+          <el-button size="small" type="danger" @click="handleDelete(row)" :disabled="!row.status">停用</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -51,6 +51,13 @@
         </el-form-item>
         <el-form-item label="最大重试次数">
           <el-input-number v-model="form.callbackRetryMax" :min="0" :max="10" />
+        </el-form-item>
+        <el-form-item label="窗口配置">
+          <el-input
+            v-model="form.windowConfig"
+            type="textarea"
+            :rows="4"
+            placeholder='{"protection_days":7,"silence_days":3,"retain_days":[1,7]}' />
         </el-form-item>
         <el-form-item label="指纹降级匹配">
           <el-switch v-model="form.fingerprintFallback" />
@@ -82,6 +89,7 @@ const editing = ref<GameConfig | null>(null)
 const defaultForm: GameConfigForm = {
   gameId: '', gameName: '', platforms: 'apk,hap,rpk',
   secretKey: '', attributionWindowDays: 30, callbackRetryMax: 3,
+  windowConfig: '{"protection_days":7,"silence_days":3,"retain_days":[1,7]}',
   fingerprintFallback: true, status: true
 }
 const form = ref<GameConfigForm>({ ...defaultForm })
@@ -106,6 +114,7 @@ function openDialog(row?: GameConfig) {
       secretKey: '****',
       attributionWindowDays: row.attributionWindowDays,
       callbackRetryMax: row.callbackRetryMax,
+      windowConfig: row.windowConfig || '',
       fingerprintFallback: row.fingerprintFallback,
       status: row.status,
     }
@@ -135,9 +144,9 @@ async function handleSave() {
 
 async function handleDelete(row: GameConfig) {
   try {
-    await ElMessageBox.confirm(`确定删除游戏 "${row.gameName}"?`, '确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确定停用游戏 "${row.gameName}"?`, '确认', { type: 'warning' })
     await deleteGame(row.id)
-    ElMessage.success('已删除')
+    ElMessage.success('已停用')
     await loadGames()
   } catch { /* cancelled */ }
 }

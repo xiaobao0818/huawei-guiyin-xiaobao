@@ -158,6 +158,10 @@ public class AttributionEngine {
                             click.getClickTime(), click.getPlatform(),
                             click.getActionType(), click.getTrackingEnabled()
                     );
+                    cc.setOaid(click.getOaid());
+                    cc.setGaid(click.getGaid());
+                    cc.setIdfa(click.getIdfa());
+                    cc.setClickRecordId(click.getId());
                     matchResult = new OaidMatcher.MatchResult(cc, "fingerprint", click.getId());
                     attributionType = "fingerprint";
                 }
@@ -168,15 +172,7 @@ public class AttributionEngine {
         AttributionRecord record = new AttributionRecord();
         record.setGameId(request.getGameId());
         record.setDedupeKey(dedupeKey);
-        oaid = getOaid(request);
-        // 指纹匹配无 OAID 时，用设备指纹哈希作为标识
-        if ((oaid == null || oaid.isEmpty()) && request.getFingerprint() != null) {
-            String ip = request.getFingerprint().getOrDefault("ip", "");
-            String ua = request.getFingerprint().getOrDefault("user_agent",
-                    request.getFingerprint().getOrDefault("ua", ""));
-            oaid = "fp:" + Integer.toHexString((ip + ua).hashCode());
-        }
-        record.setOaid(oaid);
+        record.setOaid(resolveRecordDeviceId(request, matchResult));
         record.setEventType(request.getEvent());
         record.setConversionType(conversionType);
         record.setPlatform(request.getPlatform());
@@ -216,12 +212,7 @@ public class AttributionEngine {
             record.setCallback(matchResult.getClickCache().getCallback());
             record.setAttributionType(matchResult.getMatchType());
 
-            if (matchResult.getClickRecordId() != null) {
-                clickRecordRepo.findById(matchResult.getClickRecordId()).ifPresent(click -> {
-                    click.setMatched(true);
-                    clickRecordRepo.save(click);
-                });
-            }
+            markClickRecordMatched(matchResult.getClickRecordId());
 
             markClickCacheConverted(request, matchResult);
 
@@ -300,22 +291,43 @@ public class AttributionEngine {
             return;
         }
 
-        String redisKey = RedisKeyUtil.deviceClickCacheKey(
-                request.getGameId(), matchResult.getMatchType(), matchedDeviceId);
-        Object cached = redisTemplate.opsForValue().get(redisKey);
-        if (cached == null) {
+        try {
+            String redisKey = RedisKeyUtil.deviceClickCacheKey(
+                    request.getGameId(), matchResult.getMatchType(), matchedDeviceId);
+            Object cached = redisTemplate.opsForValue().get(redisKey);
+            if (cached == null) {
+                return;
+            }
+
+            ClickCache cc = cached instanceof ClickCache
+                    ? (ClickCache) cached
+                    : objectMapper.convertValue(cached, ClickCache.class);
+            cc.setConverted(true);
+            Long ttlSeconds = redisTemplate.getExpire(redisKey, TimeUnit.SECONDS);
+            if (ttlSeconds != null && ttlSeconds > 0) {
+                redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
+            } else {
+                redisTemplate.opsForValue().set(redisKey, cc, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
+            }
+        } catch (Exception e) {
+            log.debug("更新点击缓存转化标记失败: game={}, type={}",
+                    request.getGameId(), matchResult.getMatchType(), e);
+        }
+    }
+
+    private void markClickRecordMatched(Long clickRecordId) {
+        if (clickRecordId == null) {
             return;
         }
-
-        ClickCache cc = cached instanceof ClickCache
-                ? (ClickCache) cached
-                : objectMapper.convertValue(cached, ClickCache.class);
-        cc.setConverted(true);
-        Long ttlSeconds = redisTemplate.getExpire(redisKey, TimeUnit.SECONDS);
-        if (ttlSeconds != null && ttlSeconds > 0) {
-            redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
-        } else {
-            redisTemplate.opsForValue().set(redisKey, cc, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
+        try {
+            clickRecordRepo.findById(clickRecordId).ifPresent(click -> {
+                if (!Boolean.TRUE.equals(click.getMatched())) {
+                    click.setMatched(true);
+                    clickRecordRepo.save(click);
+                }
+            });
+        } catch (Exception e) {
+            log.debug("点击记录匹配标记失败: clickId={}", clickRecordId, e);
         }
     }
 
@@ -351,23 +363,29 @@ public class AttributionEngine {
     }
 
     private ActivationDecision evaluateActivation(ReportRequest request, GameConfig gameConfig) {
-        String oaid = getOaid(request);
-        if (oaid == null || oaid.isEmpty()) {
+        String deviceKey = primaryDedupeIdentity(request);
+        if (deviceKey == null || deviceKey.isEmpty()) {
             return ActivationDecision.process(false);
         }
+        String recordDeviceId = resolveRecordDeviceId(request, null);
 
         var existingOpt = attributionRecordRepo.findFirstByGameIdAndOaidAndEventTypeOrderByCreatedAtDesc(
-                request.getGameId(), oaid, EventConstants.ACTIVATE);
+                request.getGameId(), recordDeviceId, EventConstants.ACTIVATE);
         if (existingOpt.isPresent()) {
             return isReattributionAllowed(existingOpt.get(), gameConfig)
                     ? ActivationDecision.process(true)
                     : ActivationDecision.skip();
         }
 
-        String lockKey = RedisKeyUtil.activeLockKey(request.getGameId(), oaid);
-        Boolean locked = redisTemplate.opsForValue()
-                .setIfAbsent(lockKey, "1", 180, TimeUnit.DAYS);
-        return locked == null || !locked ? ActivationDecision.skip() : ActivationDecision.process(false);
+        try {
+            String lockKey = RedisKeyUtil.activeLockKey(request.getGameId(), deviceKey);
+            Boolean locked = redisTemplate.opsForValue()
+                    .setIfAbsent(lockKey, "1", 180, TimeUnit.DAYS);
+            return locked == null || !locked ? ActivationDecision.skip() : ActivationDecision.process(false);
+        } catch (Exception e) {
+            log.warn("激活去重Redis锁失败，回退数据库幂等键: game={}", request.getGameId(), e);
+            return ActivationDecision.process(false);
+        }
     }
 
     private boolean isReattributionAllowed(AttributionRecord existing, GameConfig gameConfig) {
@@ -401,15 +419,15 @@ public class AttributionEngine {
     }
 
     private String buildDedupeKey(ReportRequest request, boolean isReattribution) {
-        String oaid = getOaid(request);
+        String deviceKey = primaryDedupeIdentity(request);
         String source = null;
-        if ("activate".equals(request.getEvent()) && oaid != null && !oaid.isEmpty()) {
+        if ("activate".equals(request.getEvent()) && deviceKey != null && !deviceKey.isEmpty()) {
             if (isReattribution) {
                 long ts = request.getTs() != null ? request.getTs() : System.currentTimeMillis();
                 long dayBucket = ts / (24 * 60 * 60 * 1000);
-                source = request.getGameId() + ":activate:reattribution:" + oaid + ":" + dayBucket;
+                source = request.getGameId() + ":activate:reattribution:" + deviceKey + ":" + dayBucket;
             } else {
-                source = request.getGameId() + ":activate:first:" + oaid;
+                source = request.getGameId() + ":activate:first:" + deviceKey;
             }
         } else if (request.getEventParams() != null) {
             Object explicitEventId = request.getEventParams().get("event_id");
@@ -427,16 +445,88 @@ public class AttributionEngine {
         }
 
         // Fallback: for events without natural idempotency keys, use a time-window
-        // based key (game + event + oaid + 5-minute bucket) to prevent accidental
+        // based key (game + event + primary device id + 5-minute bucket) to prevent accidental
         // duplicate processing within a short window.
-        if (source == null && oaid != null && !oaid.isEmpty()) {
+        if (source == null && deviceKey != null && !deviceKey.isEmpty()) {
             // Bucket into 5-minute windows
             long ts = request.getTs() != null ? request.getTs() : System.currentTimeMillis();
             long bucket = ts / (5 * 60 * 1000);
-            source = request.getGameId() + ":" + request.getEvent() + ":" + oaid + ":" + bucket;
+            source = request.getGameId() + ":" + request.getEvent() + ":" + deviceKey + ":" + bucket;
         }
 
         return source != null ? sha256Hex(source) : null;
+    }
+
+    private String resolveRecordDeviceId(ReportRequest request, OaidMatcher.MatchResult matchResult) {
+        String oaid = getOaid(request);
+        if (oaid != null && !oaid.isBlank()) {
+            return limitDeviceIdentity(oaid);
+        }
+        if (matchResult != null && matchResult.getClickCache() != null) {
+            String clickedOaid = matchResult.getClickCache().getOaid();
+            if (clickedOaid != null && !clickedOaid.isBlank()) {
+                return limitDeviceIdentity(clickedOaid);
+            }
+        }
+        String gaid = getGaid(request);
+        if (gaid != null && !gaid.isBlank()) {
+            return prefixedIdentity("gaid", gaid);
+        }
+        String idfa = getIdfa(request);
+        if (idfa != null && !idfa.isBlank()) {
+            return prefixedIdentity("idfa", idfa);
+        }
+        String fp = fingerprintIdentity(request);
+        if (fp != null) {
+            return fp;
+        }
+        return "unknown";
+    }
+
+    private String primaryDedupeIdentity(ReportRequest request) {
+        String oaid = getOaid(request);
+        if (oaid != null && !oaid.isBlank()) {
+            return "oaid:" + oaid;
+        }
+        String gaid = getGaid(request);
+        if (gaid != null && !gaid.isBlank()) {
+            return "gaid:" + gaid;
+        }
+        String idfa = getIdfa(request);
+        if (idfa != null && !idfa.isBlank()) {
+            return "idfa:" + idfa;
+        }
+        return fingerprintIdentity(request);
+    }
+
+    private String fingerprintIdentity(ReportRequest request) {
+        if (request.getFingerprint() == null || request.getFingerprint().isEmpty()) {
+            return null;
+        }
+        String ip = request.getFingerprint().getOrDefault("ip", "");
+        String ua = request.getFingerprint().getOrDefault("user_agent",
+                request.getFingerprint().getOrDefault("ua", ""));
+        if (ip.isBlank() && ua.isBlank()) {
+            return null;
+        }
+        return "fp:" + sha256Hex(ip + "|" + ua).substring(0, 32);
+    }
+
+    private String prefixedIdentity(String prefix, String value) {
+        String trimmed = value.trim();
+        int maxValueLength = Math.max(0, 127 - prefix.length());
+        if (trimmed.length() > maxValueLength) {
+            trimmed = trimmed.substring(0, maxValueLength);
+        }
+        return prefix + ":" + trimmed;
+    }
+
+    private String limitDeviceIdentity(String value) {
+        String trimmed = value != null ? value.trim() : "";
+        if (trimmed.isEmpty()) {
+            return "unknown";
+        }
+        return trimmed.substring(0, Math.min(trimmed.length(), 128));
     }
 
     private String sha256Hex(String value) {

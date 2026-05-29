@@ -177,7 +177,8 @@ class AttributionEngineTest {
         click.setCallback("callback-token");
         click.setClickTime(System.currentTimeMillis());
         click.setMatched(false);
-        clickRecordRepo.save(click);
+        click = clickRecordRepo.save(click);
+        Long clickId = click.getId();
 
         var req = newRequest("test_game", "activate", "");
         req.getDevice().setGaid("gaid-123");
@@ -189,6 +190,43 @@ class AttributionEngineTest {
         var records = attributionRecordRepo.findAll();
         assertEquals(1, records.size());
         assertEquals("gaid", records.get(0).getAttributionType());
+        assertEquals("gaid:gaid-123", records.get(0).getOaid());
+        assertEquals(clickId, records.get(0).getClickId());
+    }
+
+    @Test
+    void process_purchaseAfterActivate_reusesMatchedClickRecord() {
+        EventDefinition ed = new EventDefinition();
+        ed.setGameId("test_game");
+        ed.setEventName("purchase");
+        ed.setConversionType("paid");
+        ed.setEnabled(true);
+        eventDefRepo.save(ed);
+
+        ClickRecord click = new ClickRecord();
+        click.setGameId("test_game");
+        click.setOaid("oaid-multi");
+        click.setCallback("callback-token");
+        click.setClickTime(System.currentTimeMillis());
+        click.setMatched(false);
+        click = clickRecordRepo.save(click);
+        Long clickId = click.getId();
+
+        when(valueOperations.get(anyString())).thenReturn(null);
+
+        var activate = newRequest("test_game", "activate", "oaid-multi");
+        assertEquals("matched", engine.process(activate).getStatus());
+
+        var purchase = newRequest("test_game", "purchase", "oaid-multi");
+        purchase.setEventParams(Map.of("revenue", 9.9));
+        var result = engine.process(purchase);
+
+        assertTrue(result.isSuccess());
+        assertEquals("matched", result.getStatus());
+        assertEquals(2, attributionRecordRepo.findAll().size());
+        assertTrue(attributionRecordRepo.findAll().stream()
+                .anyMatch(record -> "purchase".equals(record.getEventType())
+                        && clickId.equals(record.getClickId())));
     }
 
     @Test

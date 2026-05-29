@@ -77,3 +77,6 @@ export function getStats(gameId: string, startDate: string, endDate: string) {
 export function getCallbackLogs(gameId: string, page = 0, size = 20) {
   return api.get<any, R<Page<CallbackLog>>>('/callback-logs', { params: { gameId, page, size } })
 }
+export function getCallbackLogsByAttribution(attributionId: number) {
+  return api.get<any, R<CallbackLog[]>>(`/callback-logs/${attributionId}`)
+}

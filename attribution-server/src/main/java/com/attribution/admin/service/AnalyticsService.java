@@ -7,7 +7,6 @@ import com.attribution.common.entity.AttributionRecord;
 import com.attribution.common.repository.AttributionRecordRepository;
 import com.attribution.common.repository.ClickRecordRepository;
 import com.attribution.common.repository.GameConfigRepository;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,7 +73,7 @@ public class AnalyticsService {
             String json = objectMapper.writeValueAsString(dto);
             stringRedisTemplate.opsForValue()
                     .set(DASHBOARD_CACHE_KEY, json, Duration.ofSeconds(DASHBOARD_CACHE_TTL_SECONDS));
-        } catch (JsonProcessingException e) {
+        } catch (Exception e) {
             log.warn("Dashboard 缓存写入失败", e);
         }
 

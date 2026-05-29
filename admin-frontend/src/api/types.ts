@@ -24,6 +24,7 @@ export interface GameConfig {
   secretKey: string
   attributionWindowDays: number
   callbackRetryMax: number
+  windowConfig: string | null
   fingerprintFallback: boolean
   status: boolean
   createdAt: string
@@ -38,6 +39,7 @@ export interface GameConfigForm {
   secretKey: string
   attributionWindowDays: number
   callbackRetryMax: number
+  windowConfig: string
   fingerprintFallback: boolean
   status: boolean
 }

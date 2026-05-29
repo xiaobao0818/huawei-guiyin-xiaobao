@@ -4,6 +4,8 @@ import com.attribution.common.dto.R;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -28,16 +30,21 @@ public class HealthController {
     }
 
     @GetMapping("/api/v1/health")
-    public R<Map<String, Object>> health() {
+    public ResponseEntity<R<Map<String, Object>>> health() {
         Map<String, Object> info = new LinkedHashMap<>();
-        info.put("status", "UP");
+        boolean databaseUp = checkDatabase();
+        boolean redisUp = checkRedis();
+        boolean ready = databaseUp && redisUp;
+
+        info.put("status", ready ? "UP" : "DOWN");
         info.put("service", "attribution-server");
         info.put("time", LocalDateTime.now().toString());
 
-        info.put("database", checkDatabase() ? "UP" : "DOWN");
-        info.put("redis", checkRedis() ? "UP" : "DOWN");
+        info.put("database", databaseUp ? "UP" : "DOWN");
+        info.put("redis", redisUp ? "UP" : "DOWN");
 
-        return R.ok(info);
+        return ResponseEntity.status(ready ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE)
+                .body(R.ok(info));
     }
 
     @GetMapping("/api/v1/health/live")

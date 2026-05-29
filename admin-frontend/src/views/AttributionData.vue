@@ -74,6 +74,11 @@
       <el-table-column prop="createdAt" label="时间" width="180">
         <template #default="{ row }">{{ row.createdAt }}</template>
       </el-table-column>
+      <el-table-column label="操作" width="90" fixed="right">
+        <template #default="{ row }">
+          <el-button size="small" @click="openLogs(row)">日志</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <div style="margin-top: 16px; display: flex; justify-content: flex-end">
@@ -87,17 +92,36 @@
         @size-change="search"
       />
     </div>
+
+    <el-drawer v-model="logDrawerVisible" title="回传日志" size="720px">
+      <el-table :data="callbackLogs" border stripe v-loading="logLoading" empty-text="暂无回传日志">
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="responseCode" label="HTTP" width="80" />
+        <el-table-column prop="resultCode" label="resultCode" width="100" />
+        <el-table-column prop="durationMs" label="耗时(ms)" width="100" />
+        <el-table-column prop="createdAt" label="时间" width="170" />
+        <el-table-column label="响应" min-width="220">
+          <template #default="{ row }">
+            <el-text truncated style="max-width: 220px">{{ row.responseBody || '-' }}</el-text>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-drawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
-import { queryAttributions } from '../api/attribution'
-import type { AttributionRecord, AttributionQuery } from '../api/types'
+import { queryAttributions, getCallbackLogsByAttribution } from '../api/attribution'
+import type { AttributionRecord, AttributionQuery, CallbackLog } from '../api/types'
+import { ElMessage } from 'element-plus'
 
 const records = ref<AttributionRecord[]>([])
 const total = ref(0)
 const loading = ref(false)
+const logDrawerVisible = ref(false)
+const logLoading = ref(false)
+const callbackLogs = ref<CallbackLog[]>([])
 
 const query = reactive<AttributionQuery>({
   gameId: '',
@@ -126,6 +150,20 @@ function reset() {
   query.callbackStatus = ''
   query.page = 1
   search()
+}
+
+async function openLogs(row: AttributionRecord) {
+  logDrawerVisible.value = true
+  logLoading.value = true
+  callbackLogs.value = []
+  try {
+    const res = await getCallbackLogsByAttribution(row.id)
+    callbackLogs.value = res.data || []
+  } catch (e: any) {
+    ElMessage.error(e?.message || '加载回传日志失败')
+  } finally {
+    logLoading.value = false
+  }
 }
 
 search()

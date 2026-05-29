@@ -16,6 +16,7 @@ public class ClickCache implements Serializable {
     private String oaid;
     private String gaid;
     private String idfa;
+    private Long clickRecordId;
     private boolean converted;
 
     public ClickCache() {}
@@ -55,6 +56,8 @@ public class ClickCache implements Serializable {
     public void setGaid(String gaid) { this.gaid = gaid; }
     public String getIdfa() { return idfa; }
     public void setIdfa(String idfa) { this.idfa = idfa; }
+    public Long getClickRecordId() { return clickRecordId; }
+    public void setClickRecordId(Long clickRecordId) { this.clickRecordId = clickRecordId; }
     public boolean isConverted() { return converted; }
     public void setConverted(boolean converted) { this.converted = converted; }
 }

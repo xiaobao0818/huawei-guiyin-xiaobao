@@ -15,7 +15,7 @@ public class FingerprintMatcher {
 
     private static final Logger log = LoggerFactory.getLogger(FingerprintMatcher.class);
 
-    /** Maximum number of unmatched click candidates to load from DB per match attempt. */
+    /** Maximum number of recent click candidates to load from DB per match attempt. */
     private static final int MAX_CANDIDATES = 500;
 
     private final ClickRecordRepository clickRepo;
@@ -53,12 +53,12 @@ public class FingerprintMatcher {
 
         // 1. Try DB-level IP prefix filter first (most efficient)
         String ipPrefix = requestIp.contains(".") ? ipPrefix(requestIp) : requestIp;
-        List<ClickRecord> candidates = clickRepo.findUnmatchedByGameTimeAndIpPrefix(
+        List<ClickRecord> candidates = clickRepo.findRecentByGameTimeAndIpPrefix(
                 gameId, since, ipPrefix, PageRequest.of(0, MAX_CANDIDATES));
 
         // 2. Fall back to DB-limited scan if no IP-prefix matches found
         if (candidates.isEmpty()) {
-            candidates = clickRepo.findUnmatchedByGameAndTime(gameId, since,
+            candidates = clickRepo.findRecentByGameAndTime(gameId, since,
                     PageRequest.of(0, MAX_CANDIDATES));
         }
 

@@ -96,17 +96,6 @@ public class ClickController {
         String finalUa = ua != null ? ua : userAgent;
         Long clickTime = ts != null ? ts : (traceTime != null ? traceTime * 1000 : System.currentTimeMillis());
 
-        ClickCache cache = new ClickCache(
-                decodedCallback, campaignId, adgroupId, contentId,
-                clickTime, platform, actionType, trackingEnabled
-        );
-        cache.setOaid(safeOaid);
-        cache.setGaid(safeGaid);
-        cache.setIdfa(safeIdfa);
-        cacheDeviceClick(gameId, "oaid", safeOaid, cache);
-        cacheDeviceClick(gameId, "gaid", safeGaid, cache);
-        cacheDeviceClick(gameId, "idfa", safeIdfa, cache);
-
         ClickRecord record = new ClickRecord();
         record.setGameId(gameId);
         record.setOaid(safeOaid);
@@ -128,6 +117,18 @@ public class ClickController {
         } catch (Exception e) {
             log.error("持久化点击记录失败", e);
         }
+
+        ClickCache cache = new ClickCache(
+                decodedCallback, campaignId, adgroupId, contentId,
+                clickTime, platform, actionType, trackingEnabled
+        );
+        cache.setOaid(safeOaid);
+        cache.setGaid(safeGaid);
+        cache.setIdfa(safeIdfa);
+        cache.setClickRecordId(record.getId());
+        cacheDeviceClick(gameId, "oaid", safeOaid, cache);
+        cacheDeviceClick(gameId, "gaid", safeGaid, cache);
+        cacheDeviceClick(gameId, "idfa", safeIdfa, cache);
 
         log.info("点击回调: game={}, oaid={}, campaign={}", gameId, safeOaid, campaignId);
         metrics.recordClickReceived(gameId);
@@ -153,7 +154,11 @@ public class ClickController {
             return;
         }
         String redisKey = RedisKeyUtil.deviceClickCacheKey(gameId, idType, deviceId);
-        redisTemplate.opsForValue().set(redisKey, cache, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
+        try {
+            redisTemplate.opsForValue().set(redisKey, cache, normalizedClickCacheTtlDays(), TimeUnit.DAYS);
+        } catch (Exception e) {
+            log.warn("点击缓存写入失败，已保留数据库记录: game={}, idType={}", gameId, idType, e);
+        }
     }
 
     private String normalizeDeviceId(String value) {

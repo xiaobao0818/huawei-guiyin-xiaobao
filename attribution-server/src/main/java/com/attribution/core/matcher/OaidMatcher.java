@@ -49,25 +49,36 @@ public class OaidMatcher {
                                                   String idType, int attributionWindowDays) {
         String redisKey = RedisKeyUtil.deviceClickCacheKey(gameId, idType, deviceId);
 
-        // 1. Try Redis cache first
-        Object cached = redisTemplate.opsForValue().get(redisKey);
-        if (cached != null) {
-            ClickCache clickCache;
-            if (cached instanceof ClickCache) {
-                clickCache = (ClickCache) cached;
-            } else {
-                clickCache = objectMapper.convertValue(cached, ClickCache.class);
+        long windowMs = (long) attributionWindowDays * 24 * 60 * 60 * 1000;
+
+        // 1. Try Redis cache first. The cache is reusable across different
+        // conversion events; duplicate control belongs to attribution dedupe keys.
+        try {
+            Object cached = redisTemplate.opsForValue().get(redisKey);
+            if (cached != null) {
+                ClickCache clickCache;
+                if (cached instanceof ClickCache) {
+                    clickCache = (ClickCache) cached;
+                } else {
+                    clickCache = objectMapper.convertValue(cached, ClickCache.class);
+                }
+                if (System.currentTimeMillis() - clickCache.getClickTime() <= windowMs) {
+                    Long clickRecordId = clickCache.getClickRecordId();
+                    if (clickRecordId == null) {
+                        clickRecordId = findLatestClick(gameId, idType, deviceId)
+                                .map(ClickRecord::getId)
+                                .orElse(null);
+                    }
+                    log.debug("{} 匹配成功(Redis): game={}, deviceId={}", idType, gameId, deviceId);
+                    return new MatchResult(clickCache, idType, clickRecordId);
+                }
             }
-            long windowMs = (long) attributionWindowDays * 24 * 60 * 60 * 1000;
-            if (System.currentTimeMillis() - clickCache.getClickTime() <= windowMs) {
-                log.debug("{} 匹配成功(Redis): game={}, deviceId={}", idType, gameId, deviceId);
-                return new MatchResult(clickCache, idType, null);
-            }
+        } catch (Exception e) {
+            log.warn("{} Redis匹配失败，回退MySQL: game={}", idType, gameId, e);
         }
 
         // 2. Fall back to MySQL
-        long windowMs = (long) attributionWindowDays * 24 * 60 * 60 * 1000;
-        return findLatestUnmatchedClick(gameId, idType, deviceId)
+        return findLatestClick(gameId, idType, deviceId)
                 .map(click -> {
                     long elapsedMs = System.currentTimeMillis() - click.getClickTime();
                     if (elapsedMs > windowMs) {
@@ -78,7 +89,11 @@ public class OaidMatcher {
                     ClickCache cc = toClickCache(click);
                     long ttlSeconds = (click.getClickTime() + windowMs - System.currentTimeMillis()) / 1000;
                     if (ttlSeconds > 0) {
-                        redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
+                        try {
+                            redisTemplate.opsForValue().set(redisKey, cc, ttlSeconds, TimeUnit.SECONDS);
+                        } catch (Exception e) {
+                            log.debug("{} MySQL命中后回填Redis失败: game={}", idType, gameId, e);
+                        }
                     }
                     log.debug("{} 匹配成功(MySQL): game={}, deviceId={}", idType, gameId, deviceId);
                     return new MatchResult(cc, idType, click.getId());
@@ -100,14 +115,15 @@ public class OaidMatcher {
         cc.setOaid(click.getOaid());
         cc.setGaid(click.getGaid());
         cc.setIdfa(click.getIdfa());
+        cc.setClickRecordId(click.getId());
         return cc;
     }
 
-    private Optional<ClickRecord> findLatestUnmatchedClick(String gameId, String idType, String deviceId) {
+    private Optional<ClickRecord> findLatestClick(String gameId, String idType, String deviceId) {
         return switch (idType) {
-            case "gaid" -> clickRepo.findFirstByGameIdAndGaidAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId);
-            case "idfa" -> clickRepo.findFirstByGameIdAndIdfaAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId);
-            default -> clickRepo.findFirstByGameIdAndOaidAndMatchedFalseOrderByClickTimeDesc(gameId, deviceId);
+            case "gaid" -> clickRepo.findFirstByGameIdAndGaidOrderByClickTimeDesc(gameId, deviceId);
+            case "idfa" -> clickRepo.findFirstByGameIdAndIdfaOrderByClickTimeDesc(gameId, deviceId);
+            default -> clickRepo.findFirstByGameIdAndOaidOrderByClickTimeDesc(gameId, deviceId);
         };
     }
 

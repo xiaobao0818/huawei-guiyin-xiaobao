@@ -67,8 +67,15 @@ public class ClickRateLimitFilter extends OncePerRequestFilter {
         String clientIp = extractClientIp(request);
         String key = RATE_LIMIT_KEY_PREFIX + clientIp;
 
-        Long currentCount = stringRedisTemplate.execute(
-                incrAndExpireScript, List.of(key), String.valueOf(windowSeconds));
+        Long currentCount;
+        try {
+            currentCount = stringRedisTemplate.execute(
+                    incrAndExpireScript, List.of(key), String.valueOf(windowSeconds));
+        } catch (Exception e) {
+            log.warn("Redis不可用，跳过速率限制: ip={}", clientIp, e);
+            filterChain.doFilter(request, response);
+            return;
+        }
         if (currentCount == null) {
             // Redis unavailable — fail open (log and allow)
             log.warn("Redis不可用，跳过速率限制: ip={}", clientIp);

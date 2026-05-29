@@ -5,6 +5,7 @@ import com.attribution.common.entity.GameConfig;
 import com.attribution.common.repository.GameConfigRepository;
 import com.attribution.common.util.AesUtil;
 import com.attribution.core.event.EventRouter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -22,12 +23,15 @@ public class GameService {
     private final GameConfigRepository gameConfigRepo;
     private final EventRouter eventRouter;
     private final StringRedisTemplate stringRedisTemplate;
+    private final ObjectMapper objectMapper;
 
     public GameService(GameConfigRepository gameConfigRepo, EventRouter eventRouter,
-                      StringRedisTemplate stringRedisTemplate) {
+                       StringRedisTemplate stringRedisTemplate,
+                       ObjectMapper objectMapper) {
         this.gameConfigRepo = gameConfigRepo;
         this.eventRouter = eventRouter;
         this.stringRedisTemplate = stringRedisTemplate;
+        this.objectMapper = objectMapper;
     }
 
     public List<GameConfig> listAll() {
@@ -65,6 +69,7 @@ public class GameService {
         if (gameConfigRepo.existsByGameId(dto.getGameId())) {
             throw new RuntimeException("游戏ID已存在: " + dto.getGameId());
         }
+        validateWindowConfig(dto.getWindowConfig());
         GameConfig config = new GameConfig();
         config.setGameId(dto.getGameId());
         config.setGameName(dto.getGameName());
@@ -72,16 +77,18 @@ public class GameService {
         config.setSecretKey(AesUtil.encrypt(dto.getSecretKey(), encryptionKey));
         config.setAttributionWindowDays(dto.getAttributionWindowDays());
         config.setCallbackRetryMax(dto.getCallbackRetryMax());
+        config.setWindowConfig(blankToNull(dto.getWindowConfig()));
         config.setFingerprintFallback(dto.getFingerprintFallback());
         config.setStatus(dto.getStatus());
         GameConfig saved = gameConfigRepo.save(config);
-        stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
+        clearDashboardCache();
         return maskSecret(saved);
     }
 
     public GameConfig update(Long id, GameConfigDTO dto) {
         GameConfig config = gameConfigRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("游戏不存在: " + id));
+        validateWindowConfig(dto.getWindowConfig());
         config.setGameName(dto.getGameName());
         config.setPlatforms(dto.getPlatforms());
         if (dto.getSecretKey() != null && !dto.getSecretKey().equals("****")) {
@@ -89,23 +96,48 @@ public class GameService {
         }
         config.setAttributionWindowDays(dto.getAttributionWindowDays());
         config.setCallbackRetryMax(dto.getCallbackRetryMax());
+        config.setWindowConfig(blankToNull(dto.getWindowConfig()));
         config.setFingerprintFallback(dto.getFingerprintFallback());
         config.setStatus(dto.getStatus());
         GameConfig saved = gameConfigRepo.save(config);
-        stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
+        clearDashboardCache();
         return maskSecret(saved);
     }
 
     public void delete(Long id) {
         GameConfig config = gameConfigRepo.findById(id).orElse(null);
         if (config != null) {
+            config.setStatus(false);
+            gameConfigRepo.save(config);
             eventRouter.clearGame(config.getGameId());
-            gameConfigRepo.deleteById(id);
-            stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
+            clearDashboardCache();
         }
     }
 
     public long count() {
         return gameConfigRepo.count();
+    }
+
+    private void validateWindowConfig(String windowConfig) {
+        if (windowConfig == null || windowConfig.isBlank()) {
+            return;
+        }
+        try {
+            objectMapper.readTree(windowConfig);
+        } catch (Exception e) {
+            throw new RuntimeException("窗口配置不是合法JSON: " + e.getMessage());
+        }
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
+    }
+
+    private void clearDashboardCache() {
+        try {
+            stringRedisTemplate.delete(DASHBOARD_CACHE_KEY);
+        } catch (Exception e) {
+            // 配置保存应以数据库为准，缓存清理失败由 TTL 自动恢复。
+        }
     }
 }

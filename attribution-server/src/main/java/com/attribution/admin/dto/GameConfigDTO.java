@@ -19,6 +19,7 @@ public class GameConfigDTO {
 
     private Integer attributionWindowDays = 30;
     private Integer callbackRetryMax = 3;
+    private String windowConfig;
     private Boolean fingerprintFallback = true;
     private Boolean status = true;
 
@@ -36,6 +37,8 @@ public class GameConfigDTO {
     public void setAttributionWindowDays(Integer attributionWindowDays) { this.attributionWindowDays = attributionWindowDays; }
     public Integer getCallbackRetryMax() { return callbackRetryMax; }
     public void setCallbackRetryMax(Integer callbackRetryMax) { this.callbackRetryMax = callbackRetryMax; }
+    public String getWindowConfig() { return windowConfig; }
+    public void setWindowConfig(String windowConfig) { this.windowConfig = windowConfig; }
     public Boolean getFingerprintFallback() { return fingerprintFallback; }
     public void setFingerprintFallback(Boolean fingerprintFallback) { this.fingerprintFallback = fingerprintFallback; }
     public Boolean getStatus() { return status; }

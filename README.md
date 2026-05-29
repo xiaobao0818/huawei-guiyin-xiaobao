@@ -7,7 +7,7 @@
 
 通用的 IAA 游戏广告归因系统，专为**华为鲸鸿动能（Petal Ads）**买量投放设计。
 
-**核心特点：** 支持 APK（Android）、HAP（鸿蒙）、RPK（快游戏）三种包体，引擎无关（纯 HTTP 接入，不依赖任何 SDK），多游戏同时管理。
+**核心特点：** 支持 APK（Android）、HAP（鸿蒙）、RPK（快游戏）三种包体，引擎无关（纯 HTTP 接入，不依赖任何 SDK），多游戏同时管理；同一广告点击可支撑激活、注册、付费、留存等多事件回传，重复控制由事件幂等键完成。
 
 ---
 
@@ -199,7 +199,7 @@ api/ (对外接口层)
 | 事件上报 | 客户端 POST，带 OAID + 事件名 | 进入 AttributionEngine |
 | 事件路由 | 查找事件定义，获取 conversion_type | `event_definition` 表 (30分钟缓存) |
 | 去重 | activate 用 Redis 锁(180天)，其他用业务幂等键 / 5分钟时间桶 | Redis + DB unique index |
-| 匹配 | OAID 精确匹配 → 指纹降级 | `click_record` 表 + Redis |
+| 匹配 | OAID → GAID → IDFA → 指纹降级，多事件可复用同一点击 | `click_record` 表 + Redis |
 | 回传入队 | 匹配成功后创建 callback_task | `callback_task` 表 (persistent) |
 | 回传执行 | Worker 每 10s 扫描，分布式锁认领，发送，记录 | `callback_log` 表 |
 | 重试 | 指数退避 5s→25s→125s，最多 N 次 | `callback_task` 状态机 |
@@ -597,10 +597,10 @@ X-Attribution-Api-Key: your-report-api-key
 
 ### 2. 游戏管理
 
-- 新增/编辑/删除游戏配置
+- 新增/编辑/停用游戏配置
 - 密钥字段：输入时 `type="password"`，编辑回显为 `****`。后端用 AES-256-GCM 加密后存入 MySQL，管理后台只返回脱敏值 `****`
 - 更新时：如果密钥字段值为 `****`（未修改），保留原密钥；否则重新加密存储
-- 删除游戏时同时清除 EventRouter 缓存和 Dashboard 缓存
+- 停用游戏时保留历史归因、回传日志和事件数据，并清除 EventRouter 缓存和 Dashboard 缓存
 
 ### 3. 事件配置
 
@@ -614,7 +614,7 @@ X-Attribution-Api-Key: your-report-api-key
 
 - 多维筛选：游戏 ID / OAID / 事件类型 / 回传状态
 - 分页浏览，每页 20 条
-- 支持查看回传日志详情（按 attributioID 查询）
+- 支持查看回传日志详情（按 attributionId 查询）
 
 ---
 

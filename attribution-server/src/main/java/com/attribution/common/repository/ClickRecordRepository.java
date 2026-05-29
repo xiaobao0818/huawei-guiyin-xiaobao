@@ -18,6 +18,12 @@ public interface ClickRecordRepository extends JpaRepository<ClickRecord, Long> 
 
     Optional<ClickRecord> findFirstByGameIdAndIdfaAndMatchedFalseOrderByClickTimeDesc(String gameId, String idfa);
 
+    Optional<ClickRecord> findFirstByGameIdAndOaidOrderByClickTimeDesc(String gameId, String oaid);
+
+    Optional<ClickRecord> findFirstByGameIdAndGaidOrderByClickTimeDesc(String gameId, String gaid);
+
+    Optional<ClickRecord> findFirstByGameIdAndIdfaOrderByClickTimeDesc(String gameId, String idfa);
+
     long countByGameIdAndCreatedAtBetween(String gameId, java.time.LocalDateTime start, java.time.LocalDateTime end);
 
     @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since ORDER BY c.clickTime DESC")
@@ -28,11 +34,22 @@ public interface ClickRecordRepository extends JpaRepository<ClickRecord, Long> 
                                                    @Param("since") Long since,
                                                    org.springframework.data.domain.Pageable pageable);
 
+    @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.clickTime > :since ORDER BY c.clickTime DESC")
+    List<ClickRecord> findRecentByGameAndTime(@Param("gameId") String gameId,
+                                               @Param("since") Long since,
+                                               org.springframework.data.domain.Pageable pageable);
+
     @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.matched = false AND c.clickTime > :since AND c.ip LIKE CONCAT(:ipPrefix, '.%') ORDER BY c.clickTime DESC")
     List<ClickRecord> findUnmatchedByGameTimeAndIpPrefix(@Param("gameId") String gameId,
                                                           @Param("since") Long since,
                                                           @Param("ipPrefix") String ipPrefix,
                                                           org.springframework.data.domain.Pageable pageable);
+
+    @Query("SELECT c FROM ClickRecord c WHERE c.gameId = :gameId AND c.clickTime > :since AND c.ip LIKE CONCAT(:ipPrefix, '.%') ORDER BY c.clickTime DESC")
+    List<ClickRecord> findRecentByGameTimeAndIpPrefix(@Param("gameId") String gameId,
+                                                       @Param("since") Long since,
+                                                       @Param("ipPrefix") String ipPrefix,
+                                                       org.springframework.data.domain.Pageable pageable);
 
     @Query("SELECT COUNT(c) FROM ClickRecord c WHERE c.createdAt BETWEEN :start AND :end")
     long countByCreatedAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);

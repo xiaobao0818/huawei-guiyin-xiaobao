@@ -24,6 +24,13 @@ public interface AttributionRecordRepository extends JpaRepository<AttributionRe
 
     List<AttributionRecord> findByGameIdAndEventTypeAndCallbackStatusAndCreatedAtAfter(String gameId, String eventType, String callbackStatus, java.time.LocalDateTime after);
 
+    List<AttributionRecord> findByGameIdAndEventTypeAndCallbackStatusAndCreatedAtBetween(
+            String gameId,
+            String eventType,
+            String callbackStatus,
+            java.time.LocalDateTime start,
+            java.time.LocalDateTime end);
+
     boolean existsByDedupeKey(String dedupeKey);
 
     @Query("SELECT a FROM AttributionRecord a WHERE a.gameId = :gameId ORDER BY a.createdAt DESC")
