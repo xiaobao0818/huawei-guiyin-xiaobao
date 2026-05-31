@@ -26,26 +26,27 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { getDashboard } from '../api/attribution'
+import { errorMessage, getDashboard } from '../api/attribution'
 import type { DashboardData } from '../api/types'
+import { ElMessage } from 'element-plus'
 
 const dashboard = ref<DashboardData | null>(null)
 
 const cards = computed(() => [
-  { label: '今日点击', value: dashboard.value?.todayClicks || 0, color: '#409EFF' },
-  { label: '今日激活', value: dashboard.value?.todayActivates || 0, color: '#67C23A' },
-  { label: '今日付费次数', value: dashboard.value?.todayPurchases || 0, color: '#E6A23C' },
-  { label: '今日收入(元)', value: '¥' + (dashboard.value?.todayRevenue || 0), color: '#F56C6C' },
-  { label: '回传成功率', value: ((dashboard.value?.callbackSuccessRate || 0) * 100).toFixed(1) + '%', color: '#409EFF' },
-  { label: '游戏总数', value: dashboard.value?.totalGames || 0, color: '#909399' },
+  { label: '今日点击', value: dashboard.value?.todayClicks ?? 0, color: '#409EFF' },
+  { label: '今日激活', value: dashboard.value?.todayActivates ?? 0, color: '#67C23A' },
+  { label: '今日付费次数', value: dashboard.value?.todayPurchases ?? 0, color: '#E6A23C' },
+  { label: '今日收入(元)', value: '¥' + (dashboard.value?.todayRevenue ?? 0), color: '#F56C6C' },
+  { label: '回传成功率', value: ((dashboard.value?.callbackSuccessRate ?? 0) * 100).toFixed(1) + '%', color: '#409EFF' },
+  { label: '游戏总数', value: dashboard.value?.totalGames ?? 0, color: '#909399' },
 ])
 
 onMounted(async () => {
   try {
     const res = await getDashboard()
     dashboard.value = res.data
-  } catch (e) {
-    console.error('获取面板数据失败', e)
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '获取面板数据失败'))
   }
 })
 </script>

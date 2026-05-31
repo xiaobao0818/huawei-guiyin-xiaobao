@@ -672,6 +672,21 @@ X-Attribution-Api-Key: your-report-api-key
 | `attribution.encryption-key` | 环境变量 | AES-256-GCM 主密钥 |
 | `attribution.api-key` | 环境变量 | 客户端上报 API Key |
 
+### 游戏窗口配置 (`window_config`)
+
+`window_config` 是每个游戏的 JSON 配置，默认建议：
+
+```json
+{"protection_days":7,"silence_days":0,"retain_days":[1,7],"auto_retention_callback":false}
+```
+
+| 字段 | 默认值 | 说明 |
+|------|:---:|------|
+| `protection_days` | 7 | 激活保护期，保护期内重复激活不再归因 |
+| `silence_days` | 0 | 保护期结束后的额外等待天数，用于再归因 |
+| `retain_days` | `[1,7]` | 留存检查关注的天数 |
+| `auto_retention_callback` | `false` | 默认只审计缺失留存；设为 `true` 才会自动生成留存记录并回传 |
+
 ### 数据库
 
 生产环境表结构由 **Flyway** 管理，迁移脚本位于 `db/migration/`。
@@ -682,10 +697,10 @@ X-Attribution-Api-Key: your-report-api-key
 |------|------|------|
 | `game_config` | 游戏配置 | `UNIQUE(game_id)` |
 | `event_definition` | 事件定义 | `UNIQUE(game_id, event_name)` |
-| `click_record` | 点击记录 | `INDEX(game_id, oaid)`, `INDEX(click_time)` |
-| `attribution_record` | 归因记录 | `INDEX(game_id, oaid)`, `INDEX(game_id, event_type)`, `UNIQUE(dedupe_key)` |
-| `callback_task` | 回传任务 | `INDEX(status, next_retry_at)`, `INDEX(status, locked_at)` |
-| `callback_log` | 回传日志 | 按 attribution_id 查询 |
+| `click_record` | 点击记录 | `INDEX(game_id, oaid)`, `INDEX(click_time)`, `INDEX(created_at)` |
+| `attribution_record` | 归因记录 | `INDEX(game_id, oaid)`, `INDEX(game_id, event_type)`, `INDEX(created_at)`, `UNIQUE(dedupe_key)` |
+| `callback_task` | 回传任务 | `INDEX(status, next_retry_at)`, `INDEX(status, locked_at)`, `INDEX(status, created_at)` |
+| `callback_log` | 回传日志 | 按 attribution_id / created_at 查询 |
 | `flyway_schema_history` | 迁移历史 | Flyway 自动管理 |
 
 数据保留策略 (每天凌晨 3 点自动清理)：
@@ -717,7 +732,8 @@ X-Attribution-Api-Key: your-report-api-key
 |------|------|------|------|
 | `attribution_events_total` | Counter | game, event | 接收的事件总数 |
 | `attribution_clicks_total` | Counter | game | 接收的点击回调总数 |
-| `attribution_match` | Counter | type(oaid/fingerprint/unmatched), game | 匹配结果分布 |
+| `attribution_match` | Counter | type(oaid/gaid/idfa/fingerprint/unmatched), game | 匹配结果分布 |
+| `attribution_result` | Counter | result, game | 处理结果分布，包含重复/停用/未配置等早退路径 |
 | `attribution_callback` | Counter | result(success/failure), game | 回传结果 |
 | `attribution_callback_retries` | Counter | game, attempt | 重试次数分布 |
 | `attribution_processing_time` | Timer | — | 归因引擎处理耗时 |

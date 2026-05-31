@@ -88,8 +88,6 @@
         :page-sizes="[10, 20, 50, 100]"
         :total="total"
         layout="total, sizes, prev, pager, next"
-        @current-change="search"
-        @size-change="search"
       />
     </div>
 
@@ -111,8 +109,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
-import { queryAttributions, getCallbackLogsByAttribution } from '../api/attribution'
+import { onUnmounted, reactive, ref, watch } from 'vue'
+import { errorMessage, queryAttributions, getCallbackLogsByAttribution } from '../api/attribution'
 import type { AttributionRecord, AttributionQuery, CallbackLog } from '../api/types'
 import { ElMessage } from 'element-plus'
 
@@ -122,6 +120,7 @@ const loading = ref(false)
 const logDrawerVisible = ref(false)
 const logLoading = ref(false)
 const callbackLogs = ref<CallbackLog[]>([])
+let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const query = reactive<AttributionQuery>({
   gameId: '',
@@ -140,16 +139,21 @@ async function search() {
       records.value = res.data.content || []
       total.value = res.data.totalElements || 0
     }
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '查询归因数据失败'))
   } finally { loading.value = false }
 }
 
 function reset() {
+  const shouldSearchNow = query.page === 1
   query.gameId = ''
   query.oaid = ''
   query.eventType = ''
   query.callbackStatus = ''
   query.page = 1
-  search()
+  if (shouldSearchNow) {
+    search()
+  }
 }
 
 async function openLogs(row: AttributionRecord) {
@@ -159,12 +163,26 @@ async function openLogs(row: AttributionRecord) {
   try {
     const res = await getCallbackLogsByAttribution(row.id)
     callbackLogs.value = res.data || []
-  } catch (e: any) {
-    ElMessage.error(e?.message || '加载回传日志失败')
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '加载回传日志失败'))
   } finally {
     logLoading.value = false
   }
 }
+
+watch(
+  () => [query.page, query.size],
+  () => {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(search, 100)
+  }
+)
+
+onUnmounted(() => {
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+  }
+})
 
 search()
 </script>

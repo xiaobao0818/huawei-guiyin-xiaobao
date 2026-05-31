@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -76,19 +77,33 @@ public class AttributionEngine {
         this.metrics = metrics;
     }
 
+    @Transactional
     public ProcessResult process(ReportRequest request) {
-        Timer.Sample timer = metrics.startProcessingTimer();
-        metrics.recordEvent(request.getGameId(), request.getEvent());
+        Timer.Sample timer = null;
+        try {
+            timer = metrics.startProcessingTimer();
+            metrics.recordEvent(request.getGameId(), request.getEvent());
+            return doProcess(request);
+        } finally {
+            if (timer != null) {
+                metrics.stopProcessingTimer(timer);
+            }
+        }
+    }
+
+    private ProcessResult doProcess(ReportRequest request) {
 
         // 1. 校验游戏配置
         GameConfig gameConfig = gameConfigRepo.findByGameIdAndStatusTrue(request.getGameId()).orElse(null);
         if (gameConfig == null) {
+            metrics.recordProcessResult(request.getGameId(), "game_unavailable");
             return ProcessResult.fail("游戏未注册或已停用: " + request.getGameId());
         }
 
         // 2. 查询事件配置
         var eventDef = eventRouter.lookup(request.getGameId(), request.getEvent()).orElse(null);
         if (eventDef == null || !eventDef.getEnabled()) {
+            metrics.recordProcessResult(request.getGameId(), "event_unavailable");
             return ProcessResult.fail("事件未配置: " + request.getEvent());
         }
 
@@ -100,6 +115,7 @@ public class AttributionEngine {
             activationDecision = evaluateActivation(request, gameConfig);
             if (activationDecision.shouldSkip()) {
                 log.info("激活在保护期内，跳过: game={}, oaid={}", request.getGameId(), getOaid(request));
+                metrics.recordProcessResult(request.getGameId(), "already_processed");
                 return ProcessResult.ok(null, "already_processed", conversionType);
             }
         }
@@ -108,6 +124,7 @@ public class AttributionEngine {
         String dedupeKey = buildDedupeKey(request, isReattribution);
         if (dedupeKey != null && attributionRecordRepo.existsByDedupeKey(dedupeKey)) {
             log.info("事件已处理过，跳过: game={}, event={}", request.getGameId(), request.getEvent());
+            metrics.recordProcessResult(request.getGameId(), "duplicate");
             return ProcessResult.ok(null, "already_processed", conversionType);
         }
 
@@ -184,7 +201,10 @@ public class AttributionEngine {
         if (request.getEventParams() != null && !request.getEventParams().isEmpty()) {
             try {
                 record.setEventParams(objectMapper.writeValueAsString(request.getEventParams()));
-            } catch (JsonProcessingException ignored) {}
+            } catch (JsonProcessingException e) {
+                log.warn("事件参数序列化失败: game={}, event={}",
+                        request.getGameId(), request.getEvent(), e);
+            }
         }
 
         if (request.getEventParams() != null) {
@@ -235,6 +255,7 @@ public class AttributionEngine {
         } catch (DataIntegrityViolationException e) {
             if (dedupeKey != null) {
                 log.info("事件幂等键已存在，跳过: game={}, event={}", request.getGameId(), request.getEvent());
+                metrics.recordProcessResult(request.getGameId(), "duplicate");
                 return ProcessResult.ok(null, "already_processed", conversionType);
             }
             throw e;
@@ -253,16 +274,16 @@ public class AttributionEngine {
         if (matchResult != null) {
             switch (matchResult.getMatchType()) {
                 case "oaid" -> metrics.recordMatchOaid(request.getGameId());
-                case "gaid", "idfa" -> metrics.recordMatchFingerprint(request.getGameId());
+                case "gaid", "idfa" -> metrics.recordMatchDeviceId(request.getGameId(), matchResult.getMatchType());
                 case "fingerprint" -> metrics.recordMatchFingerprint(request.getGameId());
                 default -> {}
             }
         } else if (needCallback) {
             metrics.recordNoMatch(request.getGameId());
         }
-        metrics.stopProcessingTimer(timer);
-
-        return ProcessResult.ok(record.getId(), matchResult != null ? "matched" : "no_match", conversionType);
+        String status = matchResult != null ? "matched" : "no_match";
+        metrics.recordProcessResult(request.getGameId(), status);
+        return ProcessResult.ok(record.getId(), status, conversionType);
     }
 
     private AttributionContext buildAttributionContext(AttributionRecord record,
@@ -391,7 +412,7 @@ public class AttributionEngine {
     private boolean isReattributionAllowed(AttributionRecord existing, GameConfig gameConfig) {
         var config = parseWindowConfig(gameConfig.getWindowConfig());
         int protectionDays = getConfigInt(config, "protection_days", 7);
-        int silenceDays = getConfigInt(config, "silence_days", 3);
+        int silenceDays = getConfigInt(config, "silence_days", 0);
 
         LocalDateTime lastActive = existing.getCreatedAt();
         if (lastActive == null) return false;
@@ -400,13 +421,20 @@ public class AttributionEngine {
         if (daysSinceLastActive < protectionDays) {
             return false; // 在保护期内
         }
-        return daysSinceLastActive >= silenceDays; // 超过沉默期才允许再归因
+        return daysSinceLastActive - protectionDays >= Math.max(0, silenceDays);
     }
 
     private Map<String, Object> parseWindowConfig(String json) {
         if (json == null || json.isBlank()) return Map.of();
         try {
-            return objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            var node = objectMapper.readTree(json);
+            if (node.isTextual()) {
+                node = objectMapper.readTree(node.asText());
+            }
+            if (!node.isObject()) {
+                return Map.of();
+            }
+            return objectMapper.convertValue(node, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             return Map.of();
         }

@@ -115,7 +115,7 @@ public class GameService {
     }
 
     public long count() {
-        return gameConfigRepo.count();
+        return gameConfigRepo.countByStatusTrue();
     }
 
     private void validateWindowConfig(String windowConfig) {
@@ -123,9 +123,26 @@ public class GameService {
             return;
         }
         try {
-            objectMapper.readTree(windowConfig);
+            var node = objectMapper.readTree(windowConfig);
+            if (node.isTextual()) {
+                node = objectMapper.readTree(node.asText());
+            }
+            if (!node.isObject()) {
+                throw new RuntimeException("窗口配置必须是JSON对象");
+            }
+            validateNonNegativeInt(node, "protection_days");
+            validateNonNegativeInt(node, "silence_days");
         } catch (Exception e) {
             throw new RuntimeException("窗口配置不是合法JSON: " + e.getMessage());
+        }
+    }
+
+    private void validateNonNegativeInt(com.fasterxml.jackson.databind.JsonNode node, String field) {
+        if (!node.has(field) || node.get(field).isNull()) {
+            return;
+        }
+        if (!node.get(field).canConvertToInt() || node.get(field).asInt() < 0) {
+            throw new RuntimeException(field + "必须是非负整数");
         }
     }
 

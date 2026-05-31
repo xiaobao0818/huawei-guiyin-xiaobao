@@ -61,10 +61,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { clearAuthCredentials, getDashboard, hasAuthCredentials, setAuthCredentials } from './api/attribution'
+import {
+  clearAuthCredentials,
+  errorMessage,
+  getDashboard,
+  hasAuthCredentials,
+  setAuthCredentials
+} from './api/attribution'
 
 const route = useRoute()
 const currentRoute = computed(() => route.path)
@@ -92,9 +98,9 @@ async function login() {
   try {
     await getDashboard()
     authed.value = true
-  } catch (e: any) {
+  } catch (e: unknown) {
     clearAuthCredentials()
-    ElMessage.error(e?.message || '登录失败')
+    ElMessage.error(errorMessage(e, '登录失败'))
   } finally {
     loggingIn.value = false
   }
@@ -106,13 +112,27 @@ function logout() {
   loginForm.password = ''
 }
 
+function handleUnauthorized() {
+  const shouldNotify = authed.value
+  clearAuthCredentials()
+  authed.value = false
+  loginForm.password = ''
+  if (shouldNotify) {
+    ElMessage.warning('登录已过期，请重新登录')
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('attribution:unauthorized', handleUnauthorized)
   if (!authed.value) return
   try {
     await getDashboard()
   } catch {
-    clearAuthCredentials()
-    authed.value = false
+    handleUnauthorized()
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('attribution:unauthorized', handleUnauthorized)
 })
 </script>

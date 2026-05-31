@@ -9,11 +9,11 @@ export default defineConfig({
     vue(),
     AutoImport({
       resolvers: [ElementPlusResolver()],
-      dts: false
+      dts: true
     }),
     Components({
       resolvers: [ElementPlusResolver()],
-      dts: false
+      dts: true
     })
   ],
   server: {

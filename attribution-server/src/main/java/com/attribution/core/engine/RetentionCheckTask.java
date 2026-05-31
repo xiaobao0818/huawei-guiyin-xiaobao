@@ -67,6 +67,8 @@ public class RetentionCheckTask {
     private void processGameRetention(GameConfig game) {
         Map<String, Object> config = parseWindowConfig(game.getWindowConfig());
         List<Integer> retainDays = getRetainDays(config);
+        boolean autoCallback = getBooleanConfig(config, "auto_retention_callback", false);
+        int missing = 0;
         int created = 0;
 
         for (Integer retainDay : retainDays) {
@@ -95,12 +97,17 @@ public class RetentionCheckTask {
                         game.getGameId(), activation.getOaid(), eventName)) {
                     continue;
                 }
+                missing++;
+                if (!autoCallback) {
+                    continue;
+                }
                 createRetentionRecord(game, eventDef, activation, eventName, retainDay);
                 created++;
             }
         }
 
-        log.debug("留存检查完成: game={}, 自动生成={}", game.getGameId(), created);
+        log.debug("留存检查完成: game={}, 缺失={}, 自动生成={}",
+                game.getGameId(), missing, created);
     }
 
     private void createRetentionRecord(GameConfig game,
@@ -125,7 +132,9 @@ public class RetentionCheckTask {
                     "auto_retention_check", true,
                     "retain_day", retainDay
             )));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("自动留存事件参数序列化失败: game={}, event={}",
+                    game.getGameId(), eventName, e);
         }
 
         boolean shouldCallback = eventDef.getConversionType() != null
@@ -174,15 +183,22 @@ public class RetentionCheckTask {
     private Map<String, Object> parseWindowConfig(String json) {
         if (json == null || json.isBlank()) return Map.of();
         try {
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+            var node = objectMapper.readTree(json);
+            if (node.isTextual()) {
+                node = objectMapper.readTree(node.asText());
+            }
+            if (!node.isObject()) {
+                return Map.of();
+            }
+            return objectMapper.convertValue(node, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             return Map.of();
         }
     }
 
-    private int getIntConfig(Map<String, Object> config, String key, int defaultVal) {
+    private boolean getBooleanConfig(Map<String, Object> config, String key, boolean defaultVal) {
         Object val = config.get(key);
-        if (val instanceof Number n) return n.intValue();
+        if (val instanceof Boolean b) return b;
         return defaultVal;
     }
 

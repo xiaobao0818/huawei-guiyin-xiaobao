@@ -90,7 +90,7 @@ public class AnalyticsService {
         dto.setTodayPurchases(attributionRepo.countByEventAndSuccess(EventConstants.PURCHASE, todayStart, todayEnd));
         Double revenue = attributionRepo.sumRevenueByDate(todayStart, todayEnd);
         dto.setTodayRevenue(revenue != null ? revenue : 0.0);
-        dto.setTotalGames(gameConfigRepo.count());
+        dto.setTotalGames(gameConfigRepo.countByStatusTrue());
 
         long totalCallbacks = attributionRepo.countCallbackAttemptsByDate(CallbackStatus.ATTEMPT_STATUSES, todayStart, todayEnd);
         long successCallbacks = attributionRepo.countCallbackAttemptsByDate(Set.of(CallbackStatus.SUCCESS.getCode()), todayStart, todayEnd);

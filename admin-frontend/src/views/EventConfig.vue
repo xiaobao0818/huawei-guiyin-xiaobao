@@ -91,7 +91,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { listGames, listEvents, createEvent, updateEvent, deleteEvent } from '../api/attribution'
+import { errorMessage, listGames, listEvents, createEvent, updateEvent, deleteEvent } from '../api/attribution'
 import type { GameConfig, EventDefinition, EventConfigForm } from '../api/types'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -110,7 +110,9 @@ onMounted(async () => {
   try {
     const res = await listGames()
     games.value = res.data || []
-  } catch { /* */ }
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '加载游戏列表失败'))
+  }
 })
 
 async function loadEvents() {
@@ -119,6 +121,8 @@ async function loadEvents() {
   try {
     const res = await listEvents(selectedGame.value)
     events.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '加载事件列表失败'))
   } finally { loading.value = false }
 }
 
@@ -153,8 +157,8 @@ async function handleSave() {
     }
     dialogVisible.value = false
     await loadEvents()
-  } catch (e: any) {
-    ElMessage.error(e?.message || '操作失败')
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '操作失败'))
   } finally { saving.value = false }
 }
 
@@ -164,8 +168,10 @@ async function handleDelete(row: EventDefinition) {
     await deleteEvent(row.id)
     ElMessage.success('已删除')
     await loadEvents()
-  } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error(e?.message || '删除失败')
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(errorMessage(e, '删除失败'))
+    }
   }
 }
 </script>

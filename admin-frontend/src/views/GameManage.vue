@@ -57,7 +57,7 @@
             v-model="form.windowConfig"
             type="textarea"
             :rows="4"
-            placeholder='{"protection_days":7,"silence_days":3,"retain_days":[1,7]}' />
+            placeholder='{"protection_days":7,"silence_days":0,"retain_days":[1,7],"auto_retention_callback":false}' />
         </el-form-item>
         <el-form-item label="指纹降级匹配">
           <el-switch v-model="form.fingerprintFallback" />
@@ -76,7 +76,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { listGames, createGame, updateGame, deleteGame } from '../api/attribution'
+import { errorMessage, listGames, createGame, updateGame, deleteGame } from '../api/attribution'
 import type { GameConfig, GameConfigForm } from '../api/types'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -89,7 +89,7 @@ const editing = ref<GameConfig | null>(null)
 const defaultForm: GameConfigForm = {
   gameId: '', gameName: '', platforms: 'apk,hap,rpk',
   secretKey: '', attributionWindowDays: 30, callbackRetryMax: 3,
-  windowConfig: '{"protection_days":7,"silence_days":3,"retain_days":[1,7]}',
+  windowConfig: '{"protection_days":7,"silence_days":0,"retain_days":[1,7],"auto_retention_callback":false}',
   fingerprintFallback: true, status: true
 }
 const form = ref<GameConfigForm>({ ...defaultForm })
@@ -99,6 +99,8 @@ async function loadGames() {
   try {
     const res = await listGames()
     games.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '加载游戏列表失败'))
   } finally {
     loading.value = false
   }
@@ -137,8 +139,8 @@ async function handleSave() {
     }
     dialogVisible.value = false
     await loadGames()
-  } catch (e: any) {
-    ElMessage.error(e?.message || '操作失败')
+  } catch (e: unknown) {
+    ElMessage.error(errorMessage(e, '操作失败'))
   } finally { saving.value = false }
 }
 
@@ -148,7 +150,11 @@ async function handleDelete(row: GameConfig) {
     await deleteGame(row.id)
     ElMessage.success('已停用')
     await loadGames()
-  } catch { /* cancelled */ }
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(errorMessage(e, '停用失败'))
+    }
+  }
 }
 
 onMounted(loadGames)

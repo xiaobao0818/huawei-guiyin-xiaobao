@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Optional;
 
@@ -54,6 +55,7 @@ public interface ClickRecordRepository extends JpaRepository<ClickRecord, Long> 
     @Query("SELECT COUNT(c) FROM ClickRecord c WHERE c.createdAt BETWEEN :start AND :end")
     long countByCreatedAtBetween(@Param("start") java.time.LocalDateTime start, @Param("end") java.time.LocalDateTime end);
 
+    @Transactional
     @Modifying
     @Query(value = "DELETE FROM click_record WHERE created_at < :cutoff LIMIT :limit", nativeQuery = true)
     int deleteByCreatedAtBefore(@Param("cutoff") java.time.LocalDateTime cutoff, @Param("limit") int limit);

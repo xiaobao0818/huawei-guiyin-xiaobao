@@ -12,4 +12,5 @@ public interface GameConfigRepository extends JpaRepository<GameConfig, Long> {
     Optional<GameConfig> findByGameIdAndStatusTrue(String gameId);
     List<GameConfig> findByStatusTrue();
     boolean existsByGameId(String gameId);
+    long countByStatusTrue();
 }

@@ -248,6 +248,27 @@ class AttributionEngineTest {
                 .anyMatch(record -> Boolean.TRUE.equals(record.getReattribution())));
     }
 
+    @Test
+    void process_activateBeforeConfiguredSilence_skipsReattribution() {
+        GameConfig config = gameConfigRepo.findByGameId("test_game").orElseThrow();
+        config.setWindowConfig("{\"protection_days\":7,\"silence_days\":3}");
+        gameConfigRepo.save(config);
+
+        var first = newRequest("test_game", "activate", "oaid-silence");
+        assertTrue(engine.process(first).isSuccess());
+
+        var existing = attributionRecordRepo.findAll().get(0);
+        existing.setCreatedAt(java.time.LocalDateTime.now().minusDays(9));
+        attributionRecordRepo.save(existing);
+
+        var second = newRequest("test_game", "activate", "oaid-silence");
+        var result = engine.process(second);
+
+        assertTrue(result.isSuccess());
+        assertEquals("already_processed", result.getStatus());
+        assertEquals(1, attributionRecordRepo.findAll().size());
+    }
+
     private AttributionEngine.ReportRequest newRequest(String gameId, String event, String oaid) {
         var req = new AttributionEngine.ReportRequest();
         req.setGameId(gameId);

@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +32,10 @@ public class CallbackRetryService {
     private static final String WORKER_LOCK_KEY = "attribution:lock:callback-worker";
     private static final String RECOVERY_LOCK_KEY = "attribution:lock:stale-recovery";
     private static final long LOCK_TTL_SECONDS = 60;
+    private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then " +
+                    "return redis.call('del', KEYS[1]) else return 0 end",
+            Long.class);
 
     private final CallbackTaskRepository callbackTaskRepo;
     private final AttributionRecordRepository attributionRecordRepo;
@@ -85,8 +90,14 @@ public class CallbackRetryService {
         String lockValue = UUID.randomUUID().toString();
 
         // Acquire distributed lock for worker
-        Boolean locked = stringRedisTemplate.opsForValue()
-                .setIfAbsent(WORKER_LOCK_KEY, lockValue, Duration.ofSeconds(LOCK_TTL_SECONDS));
+        Boolean locked;
+        try {
+            locked = stringRedisTemplate.opsForValue()
+                    .setIfAbsent(WORKER_LOCK_KEY, lockValue, Duration.ofSeconds(LOCK_TTL_SECONDS));
+        } catch (Exception e) {
+            log.warn("获取回传Worker分布式锁失败，本轮跳过", e);
+            return;
+        }
         if (locked == null || !locked) {
             return; // Another pod is processing
         }
@@ -172,8 +183,14 @@ public class CallbackRetryService {
         String lockValue = UUID.randomUUID().toString();
 
         // Separate lock for recovery to avoid blocking worker across pods
-        Boolean locked = stringRedisTemplate.opsForValue()
-                .setIfAbsent(RECOVERY_LOCK_KEY, lockValue, Duration.ofSeconds(30));
+        Boolean locked;
+        try {
+            locked = stringRedisTemplate.opsForValue()
+                    .setIfAbsent(RECOVERY_LOCK_KEY, lockValue, Duration.ofSeconds(30));
+        } catch (Exception e) {
+            log.warn("获取回传任务恢复锁失败，本轮跳过", e);
+            return;
+        }
         if (locked == null || !locked) {
             return;
         }
@@ -193,11 +210,7 @@ public class CallbackRetryService {
 
     private void releaseLock(String key, String expectedValue) {
         try {
-            // Safe release: only delete if we still own the lock
-            String currentValue = stringRedisTemplate.opsForValue().get(key);
-            if (expectedValue.equals(currentValue)) {
-                stringRedisTemplate.delete(key);
-            }
+            stringRedisTemplate.execute(RELEASE_LOCK_SCRIPT, List.of(key), expectedValue);
         } catch (Exception e) {
             log.warn("释放分布式锁失败: key={}", key, e);
         }

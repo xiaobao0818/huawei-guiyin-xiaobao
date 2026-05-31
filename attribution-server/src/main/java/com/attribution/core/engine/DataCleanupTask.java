@@ -9,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -33,6 +32,8 @@ public class DataCleanupTask {
     private static final int ATTRIBUTION_RETENTION_DAYS = 180;
     private static final int TASK_RETENTION_DAYS = 90;
     private static final int LOG_RETENTION_DAYS = 90;
+    private static final int BATCH_SIZE = 1000;
+    private static final long BATCH_PAUSE_MS = 50;
 
     private final ClickRecordRepository clickRepo;
     private final AttributionRecordRepository attributionRepo;
@@ -49,10 +50,7 @@ public class DataCleanupTask {
         this.callbackLogRepo = callbackLogRepo;
     }
 
-    private static final int BATCH_SIZE = 1000;
-
     @Scheduled(cron = "0 0 3 * * ?")
-    @Transactional
     public void cleanOldData() {
         LocalDateTime clickCutoff = LocalDateTime.now().minusDays(CLICK_RETENTION_DAYS);
         LocalDateTime attrCutoff = LocalDateTime.now().minusDays(ATTRIBUTION_RETENTION_DAYS);
@@ -79,7 +77,20 @@ public class DataCleanupTask {
             int deleted = deleteOp.getAsInt();
             if (deleted == 0) break;
             total += deleted;
+            if (deleted >= BATCH_SIZE && !pauseBetweenBatches()) {
+                break;
+            }
         }
         return total;
+    }
+
+    private boolean pauseBetweenBatches() {
+        try {
+            Thread.sleep(BATCH_PAUSE_MS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 }

@@ -15,7 +15,8 @@ import java.util.concurrent.TimeUnit;
  * <h3>Key metrics</h3>
  * <ul>
  *   <li>{@code attribution.events.total} — total events received by type and game</li>
- *   <li>{@code attribution.match} — match results by type (oaid/fingerprint/unmatched)</li>
+ *   <li>{@code attribution.match} — match results by type (oaid/gaid/idfa/fingerprint/unmatched)</li>
+ *   <li>{@code attribution.result} — process outcomes (matched/no_match/duplicate/...)</li>
  *   <li>{@code attribution.callback} — callback results (success/failure)</li>
  *   <li>{@code attribution.processing.time} — AttributionEngine process duration</li>
  * </ul>
@@ -41,9 +42,14 @@ public class AttributionMetrics {
 
     /** Record a successful OAID match. */
     public void recordMatchOaid(String gameId) {
+        recordMatchDeviceId(gameId, "oaid");
+    }
+
+    /** Record a successful deterministic device-id match. */
+    public void recordMatchDeviceId(String gameId, String idType) {
         Counter.builder("attribution.match")
                 .description("Successful attribution matches by type")
-                .tag("type", "oaid")
+                .tag("type", idType)
                 .tag("game", gameId)
                 .register(registry)
                 .increment();
@@ -64,6 +70,16 @@ public class AttributionMetrics {
         Counter.builder("attribution.match")
                 .description("Successful attribution matches by type")
                 .tag("type", "unmatched")
+                .tag("game", gameId)
+                .register(registry)
+                .increment();
+    }
+
+    /** Record the final AttributionEngine outcome, including short-circuit paths. */
+    public void recordProcessResult(String gameId, String result) {
+        Counter.builder("attribution.result")
+                .description("Attribution engine processing outcomes")
+                .tag("result", result)
                 .tag("game", gameId)
                 .register(registry)
                 .increment();
