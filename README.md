@@ -1,788 +1,607 @@
-# 华为鲸鸿动能通用自归因平台
+# 华为鲸鸿动能自归因平台
 
-[![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://adoptium.net/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-green.svg)](https://spring.io/projects/spring-boot)
-[![Vue](https://img.shields.io/badge/Vue-3.x-brightgreen.svg)](https://vuejs.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/xiaobao0818/huawei-guiyin-xiaobao/actions/workflows/ci.yml/badge.svg)](https://github.com/xiaobao0818/huawei-guiyin-xiaobao/actions/workflows/ci.yml)
+[![Java 17](https://img.shields.io/badge/Java-17-orange.svg)](https://adoptium.net/)
+[![Spring Boot 3.2.5](https://img.shields.io/badge/Spring%20Boot-3.2.5-green.svg)](https://spring.io/projects/spring-boot)
+[![Vue 3](https://img.shields.io/badge/Vue-3-brightgreen.svg)](https://vuejs.org/)
 
-通用的 IAA 游戏广告归因系统，专为**华为鲸鸿动能（Petal Ads）**买量投放设计。
+这是一个面向华为鲸鸿动能投放的通用自归因系统。它负责接收广告点击回调、接收游戏客户端转化上报、完成设备匹配和事件去重，并把符合条件的转化签名回传给鲸鸿动能。
 
-**核心特点：** 支持 APK（Android）、HAP（鸿蒙）、RPK（快游戏）三种包体，引擎无关（纯 HTTP 接入，不依赖任何 SDK），多游戏同时管理；同一广告点击可支撑激活、注册、付费、留存等多事件回传，重复控制由事件幂等键完成。
+项目适合多游戏、多包体、多引擎场景：APK、HAP、RPK 均通过 HTTP 接入，不强依赖客户端 SDK。同一次广告点击可以支撑激活、注册、付费、留存等多个事件回传，重复控制由事件幂等键和归因记录完成，而不是简单地把点击一次性消费掉。
 
----
+## 当前能力
 
-## 目录
+| 模块 | 能力 |
+|------|------|
+| 点击接收 | `GET /api/v1/click`，保存点击记录，缓存 OAID/GAID/IDFA 到 Redis |
+| 事件上报 | `POST /api/v1/report`，支持同步处理和 `?async=true` 异步入队 |
+| 匹配链路 | OAID → GAID → IDFA → 指纹降级，Redis 优先，数据库兜底 |
+| 事件配置 | 内置预置事件，也支持按游戏覆盖、新增、停用事件 |
+| 回传规则 | 支持阈值规则、时间窗口规则、and/or 组合规则 |
+| 回传队列 | `callback_task` 持久化，Worker 分布式锁认领，指数退避重试 |
+| 再归因 | 支持保护期和额外沉默期，配置在 `window_config` |
+| 留存检查 | 默认只审计缺失留存；显式开启后才自动生成留存回传 |
+| 管理后台 | 游戏管理、事件配置、Dashboard、归因查询、回传日志抽屉 |
+| 安全 | 上报 API Key、后台 Basic Auth、密钥 AES-GCM 加密、点击限流 |
+| 运维 | 健康检查、Prometheus 指标、Flyway 迁移、定时清理任务 |
 
-- [为什么需要自归因](#为什么需要自归因)
-- [系统架构](#系统架构)
-- [归因流程详解](#归因流程详解)
-- [技术栈](#技术栈)
-- [项目结构](#项目结构)
-- [快速开始](#快速开始)
-- [使用指南](#使用指南)
-- [客户端接入](#客户端接入)
-- [API 接口](#api-接口)
-- [管理后台](#管理后台)
-- [部署指南](#部署指南)
-- [配置说明](#配置说明)
-- [可观测性](#可观测性)
-- [常见问题](#常见问题)
+## 代码结构
 
----
-
-## 为什么需要自归因
-
-在鲸鸿动能投放买量广告时，广告平台需要知道"哪个点击带来了哪个转化"，才能优化投放策略（oCPX）。华为提供两种归因方式：
-
-| 方式 | 原理 | 适用场景 |
-|------|------|---------|
-| **华为分析（HA）** | 集成华为分析 SDK，华为自动完成归因 | 单一包体，接受 SDK 依赖 |
-| **自归因（自有分析工具）** | 广告主自己搭建服务端，接收点击回调、匹配转化、签名回传 | 多包体、多引擎、需要自主可控 |
-
-**如果你的场景是：** 多款 IAA 游戏、APK+HAP+RPK 三个包体同时投放、使用 Unity/Cocos 等不同引擎 —— 自归因是唯一选择。本平台就是为此构建的。
-
----
-
-## 系统架构
-
-### 整体架构图
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                        鲸鸿动能广告平台                         │
-│  宏展开 → GET 监测链接 → 接收 HMAC-SHA256 签名的转化回传       │
-└───────┬──────────────────────────────────────▲───────────────┘
-        │ callback + OAID + IP/UA              │ 签名回传
-        ▼                                      │
-┌───────────────────────────────────────────────────────────────┐
-│                     Spring Boot 归因服务                        │
-│                                                               │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────┐  │
-│  │ ClickController │ReportController│  AttributionEngine   │  │
-│  │ GET /click      │ POST /report   │  归因匹配 + 去重 + 入队│  │
-│  └──────┬──────┘  └──────┬──────┘  └──────────┬───────────┘  │
-│         │                │                     │              │
-│         ▼                ▼                     ▼              │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │                   核心引擎层                               │  │
-│  │  ┌──────────┐  ┌──────────────┐  ┌──────────────────┐   │  │
-│  │  │OaidMatcher│  │FingerprintMatcher│  │CallbackRetryService│  │
-│  │  │ OAID 匹配 │  │ IP+UA 指纹匹配  │  │ 分布式锁+指数退避 │   │  │
-│  │  └──────────┘  └──────────────┘  └──────────────────┘   │  │
-│  │  ┌──────────┐  ┌──────────────┐                         │  │
-│  │  │EventRouter│  │CallbackService│                        │  │
-│  │  │ 事件→类型  │  │ HMAC 签名回传│                        │  │
-│  │  └──────────┘  └──────────────┘                         │  │
-│  └─────────────────────────────────────────────────────────┘  │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────────┐  │
-│  │                    管理后台 API                           │  │
-│  │  GameController │ EventConfigController │ Dashboard     │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└──────────────┬────────────────────┬───────────────────────────┘
-               │                    │
-               ▼                    ▼
-         ┌─────────┐        ┌──────────┐
-         │  Redis  │        │  MySQL   │
-         │ 点击缓存 │        │ 归因数据  │
-         │ 分布式锁 │        │ 6 张核心表│
-         │ Dashboard│        │ Flyway 迁移│
-         └─────────┘        └──────────┘
-               ▲
-    ┌──────────┴──────────┐
-    │                     │
-┌───┴──────┐      ┌──────┴──────┐
-│ APK 客户端│      │ HAP/RPK 客户端│
-│ HTTP POST │      │  HTTP POST   │
-│ 任意引擎  │      │  任意引擎     │
-└──────────┘      └─────────────┘
+```text
+huawei-guiyin-xiaobao/
+├── attribution-server/                 # Spring Boot 后端
+│   ├── src/main/java/com/attribution/
+│   │   ├── api/                        # 对外点击和上报接口
+│   │   ├── admin/                      # 管理后台 API 和服务
+│   │   ├── common/                     # 实体、仓库、配置、工具
+│   │   └── core/                       # 归因、匹配、回传、指标、任务
+│   └── src/main/resources/
+│       ├── application*.yml            # dev/prod/test 配置
+│       └── db/migration/               # Flyway V1-V5 迁移
+├── admin-frontend/                     # Vue 3 + Element Plus 管理后台
+├── docker-compose.yml                  # MySQL + Redis + 后端 + 前端
+├── nginx.conf                          # 前端镜像内 Nginx 配置
+├── grafana-dashboard.json              # Grafana 面板模板
+├── 客户端接入指南.md                    # 客户端接入补充文档
+├── 游戏接入归因完整文档.md               # 游戏侧完整接入流程
+├── OAID获取指南.md                     # OAID 获取专题
+├── 技术方案.md                         # 早期技术方案资料
+└── 实施清单.md                         # 实施状态清单
 ```
 
-### 分层架构
+README 是当前主说明文档。其他中文文档保留为专题资料，如与 README 不一致，以当前代码和 README 为准。
 
-代码按职责分为四层，依赖方向严格自上而下：
+## 核心流程
 
-```
-api/ (对外接口层)
- │   ClickController, ReportController, HealthController
- │   ReportRequest, ReportResponse
- │
- ├─▶ core/ (核心引擎层)
- │     AttributionEngine, CallbackRetryService, DataCleanupTask
- │     OaidMatcher, FingerprintMatcher
- │     CallbackService, EventRouter, AttributionMetrics
- │
- ├─▶ admin/ (管理后台层)
- │     GameController, EventConfigController, DashboardController
- │     GameService, EventConfigService, AnalyticsService
- │
- └─▶ common/ (公共基础设施层)
-       GameConfig, ClickRecord, AttributionRecord (JPA 实体)
-       AesUtil, SignatureUtil, RedisKeyUtil (工具)
-       CallbackStatus, PlatformType, AttributionType (枚举)
-       R<T> (统一响应)
-```
-
-### 三层匹配策略
-
-当客户端上报事件时，归因引擎按以下优先级尝试匹配点击：
-
-```
-收到 POST /api/v1/report
-      │
-      ▼
-┌─────────────────┐
-│ 1. OAID 精确匹配  │ ← 主力方式，命中率 > 95%
-│ Redis 缓存 +      │   归因窗口: 30 天
-│ MySQL 持久化双层   │   Redis 未命中 → 回查 MySQL → 回填 Redis
-└────────┬────────┘
-         │ 未命中
-         ▼
-┌─────────────────┐
-│ 2. 指纹降级匹配  │ ← 可选，管理后台按游戏开启
-│ IP 前缀 + UA      │   归因窗口: 30 分钟
-│ 加权评分 ≥ 2 分   │   DB 层 IP 前缀预筛选 → 最多 500 候选 → 逐条打分
-└────────┬────────┘
-         │ 未命中
-         ▼
-┌─────────────────┐
-│ 3. 渠道号匹配    │ ← 预留
-│ (暂未实现)       │
-└─────────────────┘
+```text
+鲸鸿动能广告点击
+    |
+    | GET /api/v1/click?game_id=...&callback=...&oaid=...
+    v
+ClickController
+    |
+    | 保存 click_record，写入 Redis 点击缓存
+    v
+游戏客户端转化上报
+    |
+    | POST /api/v1/report
+    v
+AttributionEngine
+    |
+    | 校验游戏和事件配置
+    | 激活去重 / 业务幂等去重
+    | OAID -> GAID -> IDFA -> 指纹匹配
+    | 保存 attribution_record
+    v
+CallbackRetryService
+    |
+    | 创建 callback_task
+    | Worker 分布式锁认领
+    | 发送 HMAC-SHA256 签名回传
+    | 记录 callback_log，更新回传状态
+    v
+鲸鸿动能接收转化
 ```
 
----
+关键设计点：
 
-## 归因流程详解
-
-### 时序图
-
-```
-鲸鸿动能               归因服务                  MySQL        Redis        游戏客户端
-   │                      │                        │            │              │
-   │─ click callback ────▶│                        │            │              │
-   │  GET /api/v1/click   │                        │            │              │
-   │  oaid + callback     │── 写入 click_record ──▶│            │              │
-   │  + IP/UA/campaign    │── 缓存 ClickCache ────────────────▶│              │
-   │                      │                        │            │              │
-   │                      │◀────────── POST /api/v1/report ──────────────────│
-   │                      │   gameId + event       │            │              │
-   │                      │   + device.oaid        │            │              │
-   │                      │                        │            │              │
-   │                      │── 1. 校验 game_config   │            │              │
-   │                      │── 2. 查询 event_definition (EventRouter 缓存)      │
-   │                      │── 3. 去重检查 (dedupe_key / Redis 激活锁)          │
-   │                      │── 4. OAID 匹配          │            │              │
-   │                      │   Redis GET ──────────────────────▶│              │
-   │                      │   未命中 → MySQL 回查 ─▶│            │              │
-   │                      │   命中 → 回填 Redis ──────────────▶│              │
-   │                      │── 5. 保存 attribution_record ──▶│                 │
-   │                      │── 6. 创建 callback_task ──▶│                     │
-   │                      │                        │            │              │
-   │◀── POST 回传 ───────│                        │            │              │
-   │   HMAC-SHA256 签名   │── CallbackRetryService  │            │              │
-   │   conversion_type    │   定时扫描 pending 任务  │            │              │
-   │   + conversion_time  │   分布式锁认领 (Redis)  │            │              │
-   │                      │   发送 → 成功则标记     │            │              │
-   │                      │   失败 → 指数退避重试   │            │              │
-   │                      │                        │            │              │
-   │── resultCode: 0 ───▶│                        │            │              │
-   │                      │── 更新 callback_status  │            │              │
-   │                      │── 保存 callback_log ──▶│            │              │
-```
-
-### 数据流关键节点
-
-| 节点 | 说明 | 存储 |
-|------|------|------|
-| 点击接收 | 鲸鸿动能 GET 请求，展开宏参数 | `click_record` 表 + Redis 缓存 (7天TTL) |
-| 事件上报 | 客户端 POST，带 OAID + 事件名 | 进入 AttributionEngine |
-| 事件路由 | 查找事件定义，获取 conversion_type | `event_definition` 表 (30分钟缓存) |
-| 去重 | activate 用 Redis 锁(180天)，其他用业务幂等键 / 5分钟时间桶 | Redis + DB unique index |
-| 匹配 | OAID → GAID → IDFA → 指纹降级，多事件可复用同一点击 | `click_record` 表 + Redis |
-| 回传入队 | 匹配成功后创建 callback_task | `callback_task` 表 (persistent) |
-| 回传执行 | Worker 每 10s 扫描，分布式锁认领，发送，记录 | `callback_log` 表 |
-| 重试 | 指数退避 5s→25s→125s，最多 N 次 | `callback_task` 状态机 |
-| 完成 | 成功/耗尽 → 更新归因记录状态 | `attribution_record` 表 |
-
----
+- 点击记录会保留并可被多个不同事件复用。
+- 激活事件使用设备身份做首激活/再归因判断。
+- 付费等业务事件优先使用 `event_id`、`request_id`、`order_id` 去重；没有自然幂等键时使用 5 分钟时间桶兜底。
+- Redis 异常时，多数读写会降级到数据库或跳过缓存，不直接中断核心业务路径。
+- 回传成功以 HTTP 2xx 且响应体 `resultCode=0` 为准。
 
 ## 技术栈
 
-### 后端
+| 层 | 技术 |
+|----|------|
+| 后端 | Java 17, Spring Boot 3.2.5, Spring Security, Spring Data JPA |
+| 数据 | MySQL 8, Redis 7, Flyway |
+| 回传 | RestTemplate, AES-GCM 密钥解密, HMAC-SHA256 Authorization |
+| 观测 | Spring Actuator, Micrometer, Prometheus, Grafana |
+| 前端 | Vue 3, TypeScript strict, Vite 8, Element Plus, Axios |
+| 部署 | Docker Compose, Nginx |
+| CI | GitHub Actions: 后端 `mvn test` + 前端 `npm run build` |
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| Java | 17 | 运行环境 |
-| Spring Boot | 3.2.5 | 应用框架 |
-| Spring Data JPA | 3.2.5 | ORM / 数据访问 |
-| Spring Data Redis | 3.2.5 | Redis 操作 (Lettuce 连接池) |
-| Spring Security | 3.2.5 | 管理后台 Basic Auth |
-| Spring Actuator | 3.2.5 | 健康检查 + Prometheus 指标 |
-| Flyway | — | 数据库版本迁移 |
-| MySQL | 8.0 | 持久化存储 |
-| Redis | 7.x | 点击缓存 + 分布式锁 + Dashboard 缓存 + 速率限制 |
-| Micrometer | — | Prometheus 指标导出 |
-| SpringDoc | 2.5.0 | Swagger / OpenAPI 文档 |
+## 快速启动
 
-### 前端
+### 1. 准备依赖
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| Vue | 3.x | UI 框架 |
-| Element Plus | 2.x | 组件库 |
-| Axios | — | HTTP 客户端 (Basic Auth 拦截器) |
-| Vite | 5.x | 构建工具 |
-| TypeScript | — | 类型安全 |
+本地开发至少需要：
 
-### 部署
+- JDK 17
+- Maven 3.9+
+- Node.js 22 或兼容版本
+- Redis 7
 
-| 技术 | 用途 |
-|------|------|
-| Docker + Docker Compose | 一键部署 |
-| Nginx | 前端静态资源 + 反向代理 + 安全头 |
-
----
-
-## 项目结构
-
-```
-huawei-guiyin-xiaobao/
-├── README.md                             # 本文件
-├── 技术方案.md                            # 详细技术方案 (含鲸鸿动能 API 研究)
-├── 客户端接入指南.md                       # 各平台 OAID 获取 + 接入示例
-├── 游戏接入归因完整文档.md                  # 游戏接入全流程文档
-├── OAID获取指南.md                        # OAID 获取专题
-├── 实施清单.md                            # 部署实施 checklist
-├── .gitignore
-├── .env.example                          # 环境变量模板
-├── docker-compose.yml                    # 一键部署编排 (4 服务)
-├── nginx.conf                            # Nginx 配置 (安全头 + 反向代理)
-│
-├── attribution-server/                   # 后端服务
-│   ├── pom.xml                           # Maven 依赖
-│   ├── Dockerfile                        # 多阶段构建 (maven → jre)
-│   ├── sql/init.sql                      # 参考用 DDL (生产由 Flyway 管理)
-│   └── src/
-│       ├── main/
-│       │   ├── resources/
-│       │   │   ├── application.yml       # 通用配置
-│       │   │   ├── application-dev.yml   # 开发环境 (H2 内存库)
-│       │   │   ├── application-prod.yml  # 生产环境 (MySQL + Flyway)
-│       │   │   └── db/migration/         # Flyway 迁移脚本
-│       │   │       ├── V1__base_schema.sql
-│       │   │       └── V2__outbox_and_idempotency.sql
-│       │   └── java/com/attribution/
-│       │       ├── AttributionApplication.java
-│       │       ├── api/                  # 对外 API
-│       │       │   ├── controller/
-│       │       │   │   ├── ClickController.java      # GET  /api/v1/click
-│       │       │   │   ├── ReportController.java     # POST /api/v1/report
-│       │       │   │   └── HealthController.java     # GET  /api/v1/health
-│       │       │   └── model/
-│       │       ├── core/                 # 核心引擎
-│       │       │   ├── engine/
-│       │       │   │   ├── AttributionEngine.java    # 归因主引擎 (匹配+去重+入队)
-│       │       │   │   ├── CallbackRetryService.java # 回传 Worker (分布式锁+重试)
-│       │       │   │   └── DataCleanupTask.java      # 定时数据清理
-│       │       │   ├── matcher/
-│       │       │   │   ├── OaidMatcher.java          # OAID 精确匹配 (Redis+MySQL 双层)
-│       │       │   │   └── FingerprintMatcher.java   # 指纹降级匹配 (IP+UA 加权)
-│       │       │   ├── callback/
-│       │       │   │   ├── CallbackService.java      # 构造请求+HMAC签名+HTTP发送
-│       │       │   │   └── AttributionContext.java   # 回传上下文 DTO
-│       │       │   ├── event/
-│       │       │   │   └── EventRouter.java          # 事件→conversion_type 路由 (缓存)
-│       │       │   └── metrics/
-│       │       │       └── AttributionMetrics.java   # Prometheus 业务指标
-│       │       ├── admin/                # 管理后台
-│       │       │   ├── controller/
-│       │       │   │   ├── GameController.java
-│       │       │   │   ├── EventConfigController.java
-│       │       │   │   └── DashboardController.java
-│       │       │   ├── service/
-│       │       │   │   ├── GameService.java          # 游戏 CRUD + 密钥加密 + 缓存失效
-│       │       │   │   ├── EventConfigService.java   # 事件 CRUD + 缓存失效
-│       │       │   │   └── AnalyticsService.java     # 看板统计 + 归因查询 + 缓存
-│       │       │   └── dto/
-│       │       └── common/               # 公共基础设施
-│       │           ├── entity/           # JPA 实体 (6 张表)
-│       │           ├── enums/            # CallbackStatus, PlatformType, AttributionType
-│       │           ├── constant/         # EventConstants
-│       │           ├── util/             # AesUtil, SignatureUtil, RedisKeyUtil
-│       │           ├── config/           # Security, CORS, Redis, Filters
-│       │           ├── dto/              # R<T> 统一响应
-│       │           ├── exception/        # BusinessException, GlobalExceptionHandler
-│       │           └── repository/       # JPA Repository (6 个)
-│       └── test/                         # 单元测试 + 集成测试
-│           └── java/com/attribution/
-│               ├── AttributionEngineTest.java
-│               ├── EventRouterTest.java
-│               ├── SignatureUtilTest.java
-│               └── AesUtilTest.java
-│
-└── admin-frontend/                       # 管理后台前端
-    ├── package.json
-    ├── vite.config.ts
-    ├── Dockerfile                        # 多阶段构建 (node → nginx)
-    ├── index.html
-    └── src/
-        ├── main.ts
-        ├── App.vue                       # 布局框架 + 登录态
-        ├── router/index.ts               # 路由 (Hash 模式)
-        ├── api/
-        │   ├── types.ts                  # TypeScript 类型定义
-        │   └── attribution.ts            # API 封装 + Basic Auth 拦截器
-        └── views/
-            ├── Dashboard.vue             # 数据看板 (6 指标卡片 + 快速操作)
-            ├── GameManage.vue            # 游戏管理 (CRUD + 密钥脱敏)
-            ├── EventConfig.vue           # 事件配置 (按游戏 + 预置事件继承)
-            └── AttributionData.vue       # 归因数据查询 (多维筛选 + 分页)
-```
-
----
-
-## 快速开始
-
-### 环境要求
-
-| 工具 | 版本 | 说明 |
-|------|------|------|
-| JDK | 17+ | 后端编译运行 |
-| Maven | 3.8+ | 后端构建 |
-| Node.js | 18+ | 前端构建 |
-| Docker + Compose | — | 生产部署 |
-
-### 本地开发（3 步启动）
+开发环境默认使用 H2 内存数据库，Redis 仍建议启动：
 
 ```bash
-# 1. 启动 Redis
-docker run -d -p 6379:6379 redis:7-alpine
+docker run --rm -p 6379:6379 redis:7-alpine
+```
 
-# 2. 启动后端（H2 内存数据库，无需 MySQL）
+### 2. 启动后端
+
+```bash
 cd attribution-server
-./mvnw spring-boot:run
+mvn spring-boot:run
+```
 
-# 3. 启动前端
+dev profile 默认值：
+
+| 项 | 默认值 |
+|----|--------|
+| 后端地址 | `http://localhost:8080` |
+| 上报 API Key | `dev-report-api-key` |
+| 后台账号 | `admin` |
+| 后台密码 | `admin123` |
+| 数据库 | H2 内存库 |
+
+### 3. 启动前端
+
+```bash
 cd admin-frontend
-npm ci
+npm install
 npm run dev
 ```
 
-启动后：
+访问：
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 后端 API | http://localhost:8080 | Spring Boot |
-| 管理后台 | http://localhost:3000 | Vue3 + Element Plus |
-| Swagger | http://localhost:8080/swagger-ui.html | API 文档 |
-| H2 控制台 | http://localhost:8080/h2-console | 数据库调试 |
-| Prometheus | http://localhost:8080/actuator/prometheus | 指标导出 |
+- 管理后台：`http://localhost:3000`
+- 健康检查：`http://localhost:8080/api/v1/health`
+- Swagger：`http://localhost:8080/swagger-ui.html`（dev profile 默认开放）
+- H2 Console：`http://localhost:8080/h2-console`（dev profile 默认开放）
 
-**开发环境默认凭证：**
+## 生产部署
 
-| 用途 | 值 |
-|------|-----|
-| 管理后台账号 | `admin` / `admin123` |
-| 客户端上报 Header | `X-Attribution-Api-Key: dev-report-api-key` |
-
-> 开发环境默认值仅用于本地调试，生产环境必须通过环境变量覆盖。
-
-### Docker 一键部署
+### 1. 生成环境变量
 
 ```bash
-# 1. 配置环境变量
 cp .env.example .env
-vim .env   # 填入实际密钥和密码
+```
 
-# 2. 构建并启动（首次构建约 3-5 分钟）
+必须修改 `.env` 中的密码和密钥：
+
+```bash
+# 32 字符/字节 AES-GCM 主密钥
+openssl rand -hex 16
+
+# 上报 API Key 和后台密码建议使用独立随机值
+openssl rand -hex 24
+```
+
+关键变量：
+
+| 变量 | 用途 |
+|------|------|
+| `MYSQL_ROOT_PASSWORD` | MySQL root 密码 |
+| `MYSQL_PASSWORD` | 应用连接 MySQL 的密码 |
+| `CALLBACK_URL` | 鲸鸿动能转化回传地址 |
+| `ENCRYPTION_KEY` | 加密游戏密钥的 AES-GCM 主密钥，必须 32 字符/字节 |
+| `ATTRIBUTION_API_KEY` | 客户端上报接口 API Key |
+| `ADMIN_USERNAME` | 管理后台账号 |
+| `ADMIN_PASSWORD` | 管理后台密码 |
+
+### 2. 启动服务
+
+```bash
 docker compose up -d --build
+```
 
-# 3. 验证
+容器和端口：
+
+| 服务 | 容器 | 端口 |
+|------|------|------|
+| 后端 | `attribution-server` | `8080` |
+| 前端 | `attribution-admin` | `3000 -> 80` |
+| MySQL | `attribution-mysql` | `3306` |
+| Redis | `attribution-redis` | `6379` |
+
+### 3. 检查状态
+
+```bash
 curl http://localhost:8080/api/v1/health
+docker compose ps
+docker compose logs -f attribution-server
 ```
 
----
+生产 profile 使用 MySQL + Flyway，`ddl-auto=validate`。迁移脚本位于 `attribution-server/src/main/resources/db/migration/`。
 
-## 使用指南
+## 后台配置流程
 
-### 首次使用完整流程
+### 1. 登录管理后台
 
-**第一步：创建游戏配置**
+访问 `http://localhost:3000`，输入 `ADMIN_USERNAME` / `ADMIN_PASSWORD`。
 
-1. 登录管理后台 (http://localhost:3000)
-2. 进入「游戏管理」→ 点击「新增游戏」
-3. 填写：
+前端把 Basic Auth 凭证保存在当前浏览器会话的 `sessionStorage`，遇到 401/403 会自动清理登录态并回到登录页。
 
-| 字段 | 示例 | 说明 |
-|------|------|------|
-| 游戏 ID | `bead_master` | 唯一标识，客户端上报时使用 |
-| 游戏名称 | 串珠大师 | 显示名称 |
-| 支持平台 | `apk,hap,rpk` | 逗号分隔 |
-| 密钥 | `<从鲸鸿动能后台复制>` | Base64 密钥，提交后 AES-GCM 加密存储 |
-| 归因窗口 | 30 天 | OAID 匹配窗口 |
-| 最大重试 | 3 次 | 回传失败后的重试次数 |
+### 2. 创建游戏
 
-4. 提交后页面显示 `****`（密钥脱敏，不可见明文）
+在「游戏管理」中创建游戏：
 
-**第二步：配置鲸鸿动能监测链接**
+| 字段 | 说明 |
+|------|------|
+| 游戏 ID | 客户端和点击链接中的 `game_id` / `gameId`，必须唯一 |
+| 游戏名称 | 后台展示名 |
+| 支持平台 | `apk,hap,rpk` |
+| secretKey | 鲸鸿动能后台复制的游戏回传密钥，保存时会用 `ENCRYPTION_KEY` 加密 |
+| 归因窗口 | 点击到转化允许匹配的天数，默认 30 |
+| 最大重试次数 | 回传失败后的重试次数，默认 3 |
+| 指纹降级匹配 | OAID/GAID/IDFA 无法匹配时是否启用 IP+UA 指纹匹配 |
+| 窗口配置 | 再归因和留存检查 JSON |
 
-登录 [ads.huawei.com](https://ads.huawei.com) → 工具 → 事件资产管理：
-
-1. 为 APK/HAP/RPK 分别创建资产
-2. 分析工具选择「自有分析工具」
-3. 填写监测链接：
-
-```
-https://your-domain.com/api/v1/click?game_id=bead_master&callback=__CALLBACK__&oaid=__OAID__&campaign_id=__CID__&adgroup_id=__AID__&content_id=__CONTENT_ID__&ts=__TS__&ip=__IP__&ua=__UA__&platform=__PLATFORM__
-```
-
-4. 创建转化事件（activate / register / paid 等）→ 联调测试
-
-**第三步：客户端集成**
-
-客户端只需在关键时机发送 HTTP POST（详见[客户端接入](#客户端接入)）：
-
-```
-游戏首次启动  → 上报 activate 事件
-用户注册      → 上报 register 事件
-付费成功      → 上报 purchase 事件 (带 revenue/order_id)
-```
-
-**第四步：验证归因**
-
-1. 准备一台华为手机，获取其 OAID
-2. 在鲸鸿动能后台 → 事件概览 → 联调 → 输入测试 OAID
-3. 手机打开游戏 → 触发激活上报
-4. 查看管理后台「归因查询」→ 确认归因记录出现
-5. 检查「回传状态」是否为 success
-
-### 日常运维
-
-```
-管理后台四大模块:
-
-数据看板         游戏管理          事件配置         归因查询
-┌────────┐    ┌────────┐      ┌────────┐      ┌────────┐
-│今日点击 │    │新增游戏 │      │选择游戏 │      │多维筛选 │
-│今日激活 │    │编辑配置 │      │新增事件 │      │OAID查询 │
-│付费次数 │    │密钥脱敏 │      │映射类型 │      │状态查看 │
-│今日收入 │    │删除游戏 │      │参数Schema│     │回传日志 │
-│回传成功率│   │状态开关 │      │预置事件 │      │分页浏览 │
-│游戏总数 │    └────────┘      └────────┘      └────────┘
-└────────┘
-```
-
----
-
-## 客户端接入
-
-客户端**无需集成任何 SDK**，只需发送 HTTP POST 请求。适配所有游戏引擎（Unity、Cocos、Unreal、自研）。
-
-### 激活上报
-
-```http
-POST /api/v1/report
-Content-Type: application/json
-X-Attribution-Api-Key: your-report-api-key
-
-{
-  "gameId": "bead_master",
-  "platform": "apk",
-  "event": "activate",
-  "device": {
-    "oaid": "1fe9a970-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-  },
-  "app": {
-    "version": "1.0.0"
-  },
-  "fingerprint": {
-    "ip": "192.168.1.1",
-    "user_agent": "Mozilla/5.0 ..."
-  },
-  "ts": 1716883200000
-}
-```
-
-### 付费上报
-
-```json
-{
-  "gameId": "bead_master",
-  "platform": "apk",
-  "event": "purchase",
-  "eventParams": {
-    "revenue": 6.00,
-    "currency": "CNY",
-    "order_id": "ORDER_2024_001",
-    "product_id": "item_gems_100"
-  },
-  "device": { "oaid": "1fe9a970-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
-  "ts": 1716883200000
-}
-```
-
-### 各平台 OAID 获取
-
-| 包体 | 获取方式 | 备注 |
-|------|---------|------|
-| **APK (Android)** | `AdvertisingIdClient.getAdvertisingIdInfo(context).getId()` | 需集成 `com.huawei.hms:ads-identifier` |
-| **HAP (鸿蒙)** | `identifier.getOAID()` from `@kit.AdsKit` | 需权限 `ohos.permission.APP_TRACKING_CONSENT` |
-| **RPK (快游戏)** | `qg.getOAID()` → 降级 `qg.getLaunchOptionsSync().query.clickid` → 最终指纹 | 需在 manifest.json 配置 `system.device` |
-
-详细指引见 [客户端接入指南](客户端接入指南.md) 和 [OAID获取指南](OAID获取指南.md)。
-
----
-
-## API 接口
-
-### 客户端接口
-
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/v1/click` | 无 (but 有速率限制) | 接收鲸鸿动能点击回调 |
-| `POST` | `/api/v1/report` | `X-Attribution-Api-Key` Header | 客户端上报事件 |
-| `GET` | `/api/v1/health` | 无 | 健康检查 (含 DB/Redis 连通性) |
-| `GET` | `/api/v1/health/live` | 无 | 存活检查 (仅服务状态) |
-
-### 管理后台接口
-
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET/POST/PUT/DELETE` | `/admin/api/games` | HTTP Basic | 游戏 CRUD |
-| `GET/POST/PUT/DELETE` | `/admin/api/events` | HTTP Basic | 事件配置 CRUD |
-| `GET` | `/admin/api/games/{gameId}/events` | HTTP Basic | 按游戏查事件 |
-| `GET` | `/admin/api/dashboard` | HTTP Basic | 数据看板 (Redis 缓存 5min) |
-| `GET` | `/admin/api/attribution` | HTTP Basic | 归因记录多维查询 |
-| `GET` | `/admin/api/stats/{gameId}` | HTTP Basic | 游戏维度统计 |
-| `GET` | `/admin/api/callback-logs` | HTTP Basic | 回传日志查询 |
-
-### Click 回调参数
-
-| 参数 | 必填 | 说明 |
-|------|:--:|------|
-| `game_id` | ✅ | 游戏标识 |
-| `callback` | ✅ | 鲸鸿动能回传地址 (URL 编码原文) |
-| `oaid` | — | 设备 OAID |
-| `campaign_id` | — | 广告计划 ID |
-| `adgroup_id` | — | 广告任务 ID |
-| `content_id` | — | 创意/素材 ID |
-| `ts` | — | 点击时间戳 (毫秒) |
-| `ip` | — | 用户 IP |
-| `ua` / `user_agent` | — | 用户代理 |
-| `platform` | — | 包体类型 (apk/hap/rpk) |
-| `action_type` | — | CLICK / IMP / DEEPLINKCLICK |
-| `tracking_enabled` | — | 0=不允许跟踪, 1=允许 |
-| `trace_time` | — | 跟踪时间 |
-| `corp_id` | — | 广告主账户 ID |
-
-> 参数同时支持 snake_case 和 camelCase（如 `game_id` / `gameId`），由 `ClickController` 自动合并。
-
----
-
-## 管理后台
-
-### 1. 数据看板
-
-6 个核心指标卡片 + 快速操作入口：
-
-- **今日点击** — 当日接收的鲸鸿动能点击回调数
-- **今日激活** — 当日成功匹配的激活事件数
-- **今日付费次数** — 当日 purchase 事件数
-- **今日收入** — 当日付费总额 (元)
-- **回传成功率** — 当日成功回传 / 总回传尝试
-- **游戏总数** — 已注册的游戏数
-
-数据通过 Redis 缓存 5 分钟，修改游戏/事件配置后自动清除缓存。
-
-### 2. 游戏管理
-
-- 新增/编辑/停用游戏配置
-- 密钥字段：输入时 `type="password"`，编辑回显为 `****`。后端用 AES-256-GCM 加密后存入 MySQL，管理后台只返回脱敏值 `****`
-- 更新时：如果密钥字段值为 `****`（未修改），保留原密钥；否则重新加密存储
-- 停用游戏时保留历史归因、回传日志和事件数据，并清除 EventRouter 缓存和 Dashboard 缓存
-
-### 3. 事件配置
-
-- 先选择游戏，再查看/管理该游戏的事件列表
-- 预置事件（`game_id='*'`，`isPreset=true`）不可删除，只能禁用
-- 新建游戏时自动继承所有预置事件（`EventRouter` 的 wildcard 匹配机制）
-- `conversion_type` 为**空**时，该事件只记录不向鲸鸿动能回传（适合内部分析事件）
-- 删除事件时确认弹窗保护
-
-### 4. 归因数据查询
-
-- 多维筛选：游戏 ID / OAID / 事件类型 / 回传状态
-- 分页浏览，每页 20 条
-- 支持查看回传日志详情（按 attributionId 查询）
-
----
-
-## 部署指南
-
-### 环境变量 (`.env`)
-
-| 变量 | 必填 | 说明 |
-|------|:--:|------|
-| `MYSQL_ROOT_PASSWORD` | ✅ | MySQL root 密码 |
-| `MYSQL_PASSWORD` | ✅ | MySQL 应用密码 |
-| `ENCRYPTION_KEY` | ✅ | AES 加密主密钥 (32 字符，建议 `openssl rand -hex 16`) |
-| `ATTRIBUTION_API_KEY` | ✅ | 客户端上报 API Key |
-| `ADMIN_PASSWORD` | ✅ | 管理后台密码 |
-| `CALLBACK_URL` | — | 鲸鸿动能回传地址 (有默认值) |
-| `ADMIN_USERNAME` | — | 管理后台账号 (默认 admin) |
-
-### 服务端口
-
-| 服务 | 容器内 | 宿主机 | 内存限制 |
-|------|:---:|:---:|:---:|
-| `attribution-server` | 8080 | 8080 | 1G |
-| `admin-frontend` | 80 | 3000 | 256M |
-| MySQL | 3306 | 3306 | 1G |
-| Redis | 6379 | 6379 | 512M |
-
-### HTTPS 配置
-
-鲸鸿动能**只接受 HTTPS** 监测链接。推荐方案：
-
-1. 在服务器上使用 Nginx / Caddy 作为 SSL 终端
-2. Let's Encrypt 免费证书 + 自动续期
-3. 将 80 端口请求 301 重定向到 443
-
-项目中的 `nginx.conf` 仅处理容器内反向代理，SSL 终端应在宿主机或负载均衡器层完成。
-
----
-
-## 配置说明
-
-### 核心配置项 (`application.yml`)
-
-| 配置 | 默认值 | 说明 |
-|------|------|------|
-| `attribution.callback-url` | `https://ppscrowd-drcn.op.hicloud.com/...` | 鲸鸿动能回传地址 |
-| `attribution.callback-retry-max` | 3 | 回传失败最大重试次数 |
-| `attribution.callback-retry-base-seconds` | 5 | 重试退避基数 (指数: 5→25→125) |
-| `attribution.attribution-window-days` | 30 | OAID 匹配窗口 |
-| `attribution.fingerprint-match-minutes` | 30 | 指纹匹配窗口 |
-| `attribution.click-cache-ttl-days` | 7 | Redis 点击缓存 TTL |
-| `attribution.callback-worker-fixed-delay-ms` | 10000 | 回传 Worker 扫描间隔 |
-| `attribution.callback-worker-claim-timeout-minutes` | 10 | sending 任务超时回收 |
-| `attribution.click-rate-limit-max` | 100 | /click 接口每分钟每 IP 最大请求 |
-| `attribution.click-rate-limit-window-seconds` | 60 | 速率限制窗口 |
-| `attribution.encryption-key` | 环境变量 | AES-256-GCM 主密钥 |
-| `attribution.api-key` | 环境变量 | 客户端上报 API Key |
-
-### 游戏窗口配置 (`window_config`)
-
-`window_config` 是每个游戏的 JSON 配置，默认建议：
+推荐窗口配置：
 
 ```json
 {"protection_days":7,"silence_days":0,"retain_days":[1,7],"auto_retention_callback":false}
 ```
 
+字段说明：
+
 | 字段 | 默认值 | 说明 |
-|------|:---:|------|
-| `protection_days` | 7 | 激活保护期，保护期内重复激活不再归因 |
-| `silence_days` | 0 | 保护期结束后的额外等待天数，用于再归因 |
+|------|--------|------|
+| `protection_days` | 7 | 激活保护期，保护期内重复激活返回 `already_processed` |
+| `silence_days` | 0 | 保护期结束后的额外等待天数 |
 | `retain_days` | `[1,7]` | 留存检查关注的天数 |
-| `auto_retention_callback` | `false` | 默认只审计缺失留存；设为 `true` 才会自动生成留存记录并回传 |
+| `auto_retention_callback` | `false` | 默认只审计缺失留存；设为 `true` 才自动生成留存记录并回传 |
 
-### 数据库
+停用游戏是软停用，不会删除历史数据。停用后点击和上报不再参与匹配。
 
-生产环境表结构由 **Flyway** 管理，迁移脚本位于 `db/migration/`。
+### 3. 配置事件
 
-7 张核心表：
+系统内置通配预置事件：
 
-| 表名 | 说明 | 关键索引 |
+| event | 显示名 | 默认 conversion_type | 说明 |
+|-------|--------|----------------------|------|
+| `activate` | 激活 | `activate` | 首启/激活 |
+| `register` | 注册 | `register` | 注册、创角 |
+| `login` | 登录 | 空 | 仅记录，不回传 |
+| `purchase` | 付费 | `paid` | 需要 `revenue`，可带 `currency` / `order_id` |
+| `retain_1d` | 次留 | `retain` | 客户端真实留存上报 |
+| `retain_7d` | 7 日留存 | 空 | 默认仅记录，可按游戏启用回传 |
+| `level_up` | 升级 | 空 | 仅记录 |
+| `level_complete` | 通关 | 空 | 仅记录 |
+| `tutorial_complete` | 新手引导完成 | 空 | 仅记录 |
+| `custom` | 自定义事件 | `custom` | 自定义回传 |
+
+可按游戏创建同名事件覆盖通配预置事件，也可新增自定义事件。事件的 `conversion_type` 留空表示只记录不回传。
+
+### 4. 回传规则
+
+事件可配置 `callbackRule`，为空表示只要匹配成功就回传。支持以下 JSON：
+
+付费金额阈值：
+
+```json
+{"type":"threshold","field":"eventParams.revenue","operator":"gte","value":6.0}
+```
+
+时间窗口，限制同一游戏同一设备同一事件在窗口内只回传一次：
+
+```json
+{"type":"time_window","window_minutes":1440,"scope":"game:device"}
+```
+
+组合规则：
+
+```json
+{
+  "type": "and",
+  "rules": [
+    {"type":"threshold","field":"eventParams.revenue","operator":"gte","value":6.0},
+    {"type":"time_window","window_minutes":1440}
+  ]
+}
+```
+
+支持的规则类型：`threshold`、`time_window`、`and`、`or`。支持的阈值操作符：`gte`、`gt`、`lte`、`lt`、`eq`。
+
+## 对外接口
+
+### 点击回调
+
+鲸鸿动能监测链接应指向：
+
+```text
+GET https://你的域名/api/v1/click
+```
+
+核心参数：
+
+| 参数 | 必填 | 说明 |
 |------|------|------|
-| `game_config` | 游戏配置 | `UNIQUE(game_id)` |
-| `event_definition` | 事件定义 | `UNIQUE(game_id, event_name)` |
-| `click_record` | 点击记录 | `INDEX(game_id, oaid)`, `INDEX(click_time)`, `INDEX(created_at)` |
-| `attribution_record` | 归因记录 | `INDEX(game_id, oaid)`, `INDEX(game_id, event_type)`, `INDEX(created_at)`, `UNIQUE(dedupe_key)` |
-| `callback_task` | 回传任务 | `INDEX(status, next_retry_at)`, `INDEX(status, locked_at)`, `INDEX(status, created_at)` |
-| `callback_log` | 回传日志 | 按 attribution_id / created_at 查询 |
-| `flyway_schema_history` | 迁移历史 | Flyway 自动管理 |
+| `game_id` / `gameId` | 是 | 游戏 ID |
+| `callback` | 是 | 鲸鸿动能 callback 原文，服务端会解码并保存 |
+| `oaid` | 否 | 华为/Android 设备 OAID |
+| `gaid` / `google_adid` | 否 | Google Advertising ID |
+| `idfa` | 否 | iOS IDFA |
+| `campaign_id` / `campaignId` | 否 | 计划 ID |
+| `adgroup_id` / `adGroupId` | 否 | 任务/广告组 ID |
+| `content_id` / `contentId` | 否 | 创意 ID |
+| `ts` | 否 | 点击时间戳，毫秒 |
+| `trace_time` | 否 | 点击时间戳，秒 |
+| `ip` | 否 | 用户 IP，指纹匹配使用 |
+| `ua` / `user_agent` | 否 | User-Agent，指纹匹配使用 |
+| `platform` | 否 | `apk` / `hap` / `rpk` |
+| `tracking_enabled` | 否 | 鲸鸿动能跟踪标记 |
 
-数据保留策略 (每天凌晨 3 点自动清理)：
+返回值是纯文本：
 
-| 表 | 保留天数 |
-|------|:---:|
+- `success`：接收成功
+- `error`：参数缺失或游戏未注册/已停用
+
+`/click` 不要求 API Key，但有基于 IP 的 Redis 限流，默认每分钟 100 次。Redis 不可用时限流 fail-open。
+
+### 事件上报
+
+```text
+POST /api/v1/report
+Header: X-Attribution-Api-Key: <ATTRIBUTION_API_KEY>
+Content-Type: application/json
+```
+
+同步上报示例：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/report \
+  -H 'Content-Type: application/json' \
+  -H 'X-Attribution-Api-Key: dev-report-api-key' \
+  -d '{
+    "gameId": "demo_game",
+    "platform": "apk",
+    "event": "activate",
+    "device": {
+      "oaid": "oaid-demo"
+    },
+    "app": {
+      "version": "1.0.0"
+    },
+    "ts": 1735689600000
+  }'
+```
+
+付费上报示例：
+
+```json
+{
+  "gameId": "demo_game",
+  "platform": "apk",
+  "event": "purchase",
+  "device": {
+    "oaid": "oaid-demo"
+  },
+  "eventParams": {
+    "revenue": 9.9,
+    "currency": "CNY",
+    "order_id": "ORDER-20260531-001"
+  }
+}
+```
+
+异步上报：
+
+```text
+POST /api/v1/report?async=true
+```
+
+异步模式会先写入 `event_task` 并立即返回 `accepted`，随后由 `EventWorker` 每秒扫描并处理。失败任务可在后台接口中查看并重放。
+
+返回结构：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "status": "matched",
+    "attributionId": 123,
+    "conversionType": "activate",
+    "message": "处理成功"
+  },
+  "timestamp": 1735689600000
+}
+```
+
+常见 `status`：
+
+| status | 说明 |
+|--------|------|
+| `matched` | 匹配到点击并已保存归因记录 |
+| `no_match` | 未匹配到点击，但事件已记录 |
+| `already_processed` | 激活保护期或幂等键重复 |
+| `accepted` | 异步任务已入队 |
+
+## 回传给鲸鸿动能
+
+回传地址由 `attribution.callback-url` / `CALLBACK_URL` 配置，默认：
+
+```text
+https://ppscrowd-drcn.op.hicloud.com/action-lib-track/hiad/v2/actionupload
+```
+
+回传体包含：
+
+| 字段 | 说明 |
+|------|------|
+| `callback` | 点击回调中的 callback 原文 |
+| `conversion_type` | 事件映射后的转化类型 |
+| `conversion_time` | 转化时间，秒级时间戳 |
+| `timestamp` | 请求时间，毫秒级时间戳 |
+| `oaid` | OAID。GAID/IDFA 匹配时若没有 OAID 会传空字符串 |
+| `content_id` | 可选，创意 ID |
+| `campaign_id` | 可选，计划 ID |
+| `tracking_enabled` | 可选，默认 `1` |
+| `conversion_extend` | 付费事件扩展字段，包含 `revenue` 和 `currency` |
+
+系统会解密游戏 `secretKey`，基于请求体生成 HMAC-SHA256 `Authorization` 头。回传结果写入 `callback_log`，归因记录的 `callback_status` 会随任务状态更新。
+
+## 数据表
+
+生产环境由 Flyway 管理表结构：
+
+| 版本 | 说明 |
+|------|------|
+| V1 | 基础表：游戏、事件、点击、归因、回传日志，内置预置事件 |
+| V2 | 回传任务表、归因幂等键 |
+| V3 | 异步事件任务、回传规则、窗口配置、debug/reattribution 字段 |
+| V4 | GAID/IDFA 字段、click_record 乐观锁版本 |
+| V5 | 清理任务所需 created_at / status_created 索引 |
+
+核心表：
+
+| 表 | 用途 |
+|----|------|
+| `game_config` | 游戏配置和加密后的回传密钥 |
+| `event_definition` | 事件到 `conversion_type` 的映射和回传规则 |
+| `click_record` | 广告点击明细 |
+| `attribution_record` | 归因结果、回传状态、幂等键 |
+| `callback_task` | 持久化回传任务队列 |
+| `callback_log` | 每次回传请求和响应 |
+| `event_task` | 异步上报任务 |
+
+## 定时任务
+
+| 任务 | 频率 | 说明 |
+|------|------|------|
+| `CallbackRetryService` | 每 10 秒 | 认领并发送到期回传任务 |
+| `EventWorker` | 每 1 秒 | 消费异步事件任务 |
+| `EventWorker` stale recovery | 每 5 分钟 | 回收超时 processing 任务 |
+| `EventWorker` cleanup | 每天 4:00 | 清理 7 天前 done 任务 |
+| `RetentionCheckTask` | 每天 2:00 | 检查配置天数的留存缺失 |
+| `DataCleanupTask` | 每天 3:00 | 分批清理过期数据 |
+| `EventRouter` cache cleanup | 每 10 分钟 | 清理事件路由缓存 |
+
+可通过配置关闭调度：
+
+```yaml
+attribution:
+  scheduling:
+    enabled: false
+```
+
+## 数据保留策略
+
+| 表 | 保留策略 |
+|----|----------|
 | `click_record` | 90 天 |
 | `attribution_record` | 180 天 |
-| `callback_task` (已完成) | 90 天 |
+| `callback_task` | 已完成/终态任务保留 90 天 |
 | `callback_log` | 90 天 |
+| `event_task` | done 任务保留 7 天 |
 
----
+清理任务使用 `LIMIT 1000` 分批删除，每批独立短事务，并在批次之间短暂停顿，减少对线上数据库的冲击。
+
+## 配置参考
+
+### attribution 配置
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `attribution.callback-url` | 华为中国区默认地址 | 鲸鸿动能回传地址 |
+| `attribution.callback-retry-max` | 3 | 全局默认值，游戏配置中也有最大重试次数 |
+| `attribution.callback-retry-base-seconds` | 5 | 指数退避基数，最大延迟 3600 秒 |
+| `attribution.attribution-window-days` | 30 | 全局默认归因窗口；实际以游戏配置为准 |
+| `attribution.fingerprint-match-minutes` | 30 | 指纹匹配窗口 |
+| `attribution.click-cache-ttl-days` | 7 | Redis 点击缓存 TTL |
+| `attribution.callback-worker-fixed-delay-ms` | 10000 | 回传 Worker 扫描间隔 |
+| `attribution.callback-worker-claim-timeout-minutes` | 10 | sending 任务超时回收阈值 |
+| `attribution.click-rate-limit-max` | 100 | `/click` 每个 IP 每窗口最大请求数 |
+| `attribution.click-rate-limit-window-seconds` | 60 | `/click` 限流窗口 |
+| `attribution.api-key` | 环境变量 | 客户端上报 API Key |
+| `attribution.debug-api-key` | 空 | 可选 debug header |
+| `attribution.security.swagger-public` | false | 是否公开 Swagger |
+| `attribution.security.h2-console-public` | false | 是否公开 H2 Console |
+| `attribution.security.metrics-public` | false | 是否公开 Prometheus/metrics |
+
+### 安全配置
+
+| 路径 | 认证 |
+|------|------|
+| `GET /api/v1/click` | 公开，带限流 |
+| `POST /api/v1/report` | `X-Attribution-Api-Key` |
+| `/admin/api/**` | HTTP Basic Admin |
+| `/actuator/health` | 公开 |
+| `/actuator/prometheus` | 默认 Admin，可配置公开 |
+| `/swagger-ui.html` | dev 公开，prod 默认 Admin |
+| `/h2-console/**` | dev 公开，prod 默认拒绝 |
 
 ## 可观测性
 
-### 健康检查
+健康检查：
 
-| 端点 | 说明 |
-|------|------|
-| `/api/v1/health` | 完整检查：服务状态 + 数据库连接 + Redis 连通性 |
-| `/api/v1/health/live` | 存活检查：仅服务状态 |
-| `/actuator/health` | Spring Actuator 健康端点 |
+```bash
+curl http://localhost:8080/api/v1/health
+curl http://localhost:8080/api/v1/health/live
+```
 
-### Prometheus 指标
+`/api/v1/health` 会检查数据库和 Redis。任一依赖不可用时返回 HTTP 503；`/api/v1/health/live` 只表示进程存活。
 
-端点：`GET /actuator/prometheus`
+Prometheus 指标：
 
-| 指标 | 类型 | 标签 | 说明 |
-|------|------|------|------|
-| `attribution_events_total` | Counter | game, event | 接收的事件总数 |
-| `attribution_clicks_total` | Counter | game | 接收的点击回调总数 |
-| `attribution_match` | Counter | type(oaid/gaid/idfa/fingerprint/unmatched), game | 匹配结果分布 |
-| `attribution_result` | Counter | result, game | 处理结果分布，包含重复/停用/未配置等早退路径 |
-| `attribution_callback` | Counter | result(success/failure), game | 回传结果 |
-| `attribution_callback_retries` | Counter | game, attempt | 重试次数分布 |
-| `attribution_processing_time` | Timer | — | 归因引擎处理耗时 |
+| 指标 | 标签 | 说明 |
+|------|------|------|
+| `attribution_events_total` | `game`, `event` | 收到的上报事件 |
+| `attribution_clicks_total` | `game` | 收到的点击回调 |
+| `attribution_match` | `game`, `type` | 匹配方式：oaid/gaid/idfa/fingerprint/unmatched |
+| `attribution_result` | `game`, `result` | 引擎处理结果，包括重复、停用、未配置等路径 |
+| `attribution_callback` | `game`, `result` | 回传成功/失败 |
+| `attribution_callback_retries` | `game`, `attempt` | 回传重试次数 |
+| `attribution_processing_time` | - | 归因处理耗时 |
+| `attribution_callback_queue_depth` | `queue` | 回传队列积压 |
 
----
+仓库提供 `grafana-dashboard.json` 作为基础面板模板。
+
+## 本地验证
+
+后端测试：
+
+```bash
+cd attribution-server
+mvn test
+```
+
+前端构建：
+
+```bash
+cd admin-frontend
+npm ci
+npm run build
+```
+
+CI 会在 `main` push 和 PR 时执行同样的后端测试和前端构建。
 
 ## 常见问题
 
-**Q: 客户端如何接入？**
-A: 客户端只需发 HTTP POST 到 `/api/v1/report`，携带 gameId + event + device.oaid，Header 带上 `X-Attribution-Api-Key`。不需要任何 SDK。任何游戏引擎（Unity、Cocos、Unreal、自研）都能接入。
+### 为什么点击已经 matched 还允许付费复用？
 
-**Q: 归因匹配失败怎么办？**
-A: 原因通常是：
-1. 用户点击广告后超过 30 天才激活（超出归因窗口）
-2. 用户关闭了广告跟踪（OAID 返回全 0）
-3. 鲸鸿动能点击回调未到达（检查监测链接配置和 HTTPS 证书）
+这是有意设计。同一次广告点击对应的是一次投放触达，后续激活、注册、付费、留存都可能需要回传给广告平台。系统用 `attribution_record.dedupe_key` 控制事件重复，而不是用 `click_record.matched` 阻断后续事件。
 
-系统会按优先级自动降级：OAID 精确匹配 → 指纹匹配（需管理后台开启）→ 返回 unmatched。
+### 没有 OAID 怎么办？
 
-**Q: 密钥如何存储？**
-A: 鲸鸿动能密钥（Base64 字符串）通过 AES-256-GCM 加密后存入 MySQL `game_config.secret_key` 字段，每次加密使用随机 IV。主密钥通过环境变量 `ENCRYPTION_KEY` 注入，只存在于服务器内存中。管理后台 API 返回时脱敏为 `****`。
+上报可带 GAID 或 IDFA；若游戏开启指纹降级，还可以用 IP + User-Agent 做短窗口匹配。指纹匹配只作为兜底，窗口默认 30 分钟。
 
-**Q: 如何添加新游戏？**
-A: 管理后台 → 游戏管理 → 新增，填写 gameId、游戏名、从鲸鸿动能后台复制的 Base64 密钥。新建游戏自动继承所有预置事件（activate、register、purchase 等）。
+### 留存是否会自动回传？
 
-**Q: 支持哪些 conversion_type？**
-A: activate（激活）、register（注册）、retain（留存）、paid（付费）、custom（自定义）、browse、addToCart、form_submit 等。在管理后台「事件配置」中可为每个事件映射对应的类型，留空则只记录不回传。
+默认不会。客户端真实发生留存时应上报 `retain_1d`、`retain_7d` 等事件。`RetentionCheckTask` 默认只审计缺失留存；只有把游戏 `window_config.auto_retention_callback` 显式设为 `true`，系统才会自动生成留存记录并尝试回传。
 
-**Q: 回传失败如何处理？**
-A: 系统有完整的重试机制：
-1. 匹配成功后创建 `callback_task` 记录（持久化，服务重启不丢）
-2. Worker 每 10 秒扫描 pending/retry_pending 任务
-3. 指数退避重试：5s → 25s → 125s（最多 N 次，由游戏配置决定）
-4. 超过最大次数后标记为 dead，状态更新为 failed
-5. 所有回传请求/响应完整记入 `callback_log` 表，便于排查
+### 回传失败会丢吗？
 
-**Q: 如何处理多 Pod 部署？**
-A: `CallbackRetryService` 使用 Redis 分布式锁：
-- Worker 锁 (`attribution:lock:callback-worker`)：保证同一时刻只有一个 Pod 扫描任务
-- 恢复锁 (`attribution:lock:stale-recovery`)：保证超时任务只被一个 Pod 回收
-- 任务认领使用 SQL UPDATE + status 条件，天然原子
+不会直接丢。匹配成功后先创建 `callback_task`，Worker 负责发送。失败会按游戏配置重试，耗尽后标记 `dead` / `failed`，可在归因查询和回传日志中排查。
 
----
+### Redis 不可用会怎样？
 
-## License
+健康检查会返回 DOWN。业务侧尽量降级：点击缓存写入失败时保留数据库记录，匹配 Redis 未命中会回查数据库，点击限流和部分缓存能力会跳过。但回传 Worker 的分布式锁依赖 Redis，Redis 不可用时会暂停当轮发送。
 
-MIT License
+### 生产为什么必须保护后台和指标？
 
----
+后台可管理游戏密钥和事件回传，指标可能暴露投放数据。生产 profile 默认 Swagger、H2、metrics 都不公开；如需开放 Prometheus，应在内网或网关层做访问控制。
 
-**作者：** 张小宝  
-**仓库：** https://github.com/xiaobao0818/huawei-guiyin-xiaobao
+## 相关文档
+
+| 文档 | 用途 |
+|------|------|
+| `客户端接入指南.md` | 客户端事件上报时机和示例 |
+| `游戏接入归因完整文档.md` | 游戏团队接入全流程 |
+| `OAID获取指南.md` | APK/HAP/RPK 获取 OAID 的补充说明 |
+| `技术方案.md` | 早期技术设计和调研记录 |
+| `实施清单.md` | 项目实施状态和后续任务 |
