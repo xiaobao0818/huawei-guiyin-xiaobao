@@ -5,6 +5,41 @@
 [![Spring Boot 3.2.5](https://img.shields.io/badge/Spring%20Boot-3.2.5-green.svg)](https://spring.io/projects/spring-boot)
 [![Vue 3](https://img.shields.io/badge/Vue-3-brightgreen.svg)](https://vuejs.org/)
 
+## 测试与验证状态
+
+当前 `main` 分支的代码和文档已经完成以下验证：
+
+| 验证项 | 命令或来源 | 结果 |
+|--------|------------|------|
+| 后端单元/集成测试 | `cd attribution-server && mvn test` | 通过，30 个测试 0 失败 |
+| 前端类型检查与生产构建 | `cd admin-frontend && npm run build` | 通过，TypeScript strict + Vite 构建成功 |
+| Git 差异格式检查 | `git diff --check` / `git diff --cached --check` | 通过，无尾随空格或补丁格式问题 |
+| GitHub Actions CI | [CI 工作流](https://github.com/xiaobao0818/huawei-guiyin-xiaobao/actions/workflows/ci.yml) 和顶部状态徽章 | main 分支 push 后自动验证后端测试和前端构建 |
+| 上一次核心功能修复 CI | [run 26706360227](https://github.com/xiaobao0818/huawei-guiyin-xiaobao/actions/runs/26706360227) | 通过，覆盖归因链路修复后的后端和前端验证 |
+
+后端测试覆盖的重点：
+
+- `SignatureUtilTest`：鲸鸿动能回传签名生成、验签和异常参数处理。
+- `AesUtilTest`：游戏 `secretKey` 的 AES-GCM 加密、解密和错误密钥处理。
+- `CallbackRuleEvaluatorTest`：阈值回传规则、时间窗口规则和规则解析兼容性。
+- `AttributionEngineTest`：游戏/事件校验、无匹配记录、重复激活、付费金额、GAID 匹配、多事件复用点击、再归因保护期和沉默期。
+- `EventRouterTest`：按游戏事件路由、通配预置事件、缓存清理和事件启停。
+
+前端构建验证的重点：
+
+- `vue-tsc` 在 `strict: true` 下通过，API 返回类型、错误处理和页面状态类型可编译。
+- `vite build` 生成生产产物成功。构建日志中的 `@vueuse/core` pure annotation 警告来自依赖包注释位置，不影响构建结果。
+
+已通过人工核查并写入文档的功能闭环：
+
+- 点击接收、点击持久化、Redis 点击缓存和 Redis 异常降级。
+- OAID、GAID、IDFA、指纹四级匹配和同一点击多事件复用。
+- 激活保护期、再归因额外沉默期、业务幂等键和 5 分钟兜底时间桶。
+- 回传规则、回传任务持久化、分布式锁认领、失败重试、回传日志和状态更新。
+- 留存任务默认只审计缺失留存，只有显式开启 `auto_retention_callback` 才自动生成留存回传。
+- 管理后台登录态失效处理、游戏管理、事件配置、Dashboard、归因查询和回传日志抽屉。
+- 生产部署配置、Flyway V1-V5 迁移、健康检查、Prometheus 指标和定时清理策略。
+
 这是一个面向华为鲸鸿动能投放的通用自归因系统。它负责接收广告点击回调、接收游戏客户端转化上报、完成设备匹配和事件去重，并把符合条件的转化签名回传给鲸鸿动能。
 
 项目适合多游戏、多包体、多引擎场景：APK、HAP、RPK 均通过 HTTP 接入，不强依赖客户端 SDK。同一次广告点击可以支撑激活、注册、付费、留存等多个事件回传，重复控制由事件幂等键和归因记录完成，而不是简单地把点击一次性消费掉。
